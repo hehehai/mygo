@@ -613,6 +613,13 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
 			if rt.touch.down && focus.textClient != nil {
 				rt.ime.show++
 			}
+			if focus.textClient != nil || focus.takesText {
+				// A text input pressed: the window asks for the keyboard,
+				// which a panel that takes it only for text does not take
+				// by itself (the host does nothing where the window has
+				// it, or takes it anyway).
+				rt.host.takeKeyboard()
+			}
 		}
 		if newFocus != rt.focused {
 			rt.focused = newFocus

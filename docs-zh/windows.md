@@ -175,6 +175,7 @@ win.Focus()             // Blur, IsFocused
 其他属性：
 
 - `SetTitle`、`SetResizable`、`SetMovable`、`SetMinimizable`、`SetMaximizable`、`SetClosable`、`SetMinimumSize`、`SetMaximumSize`、`SetAlwaysOnTop`、`SetOpacity`、`SetHasShadow`、`SetBackgroundColor` 和 `SetVibrancy` 更改选项所设置的内容。在 Windows 上，`SetVibrancy` 更改用材质创建的窗口的材质，在其他窗口中则不显示任何材质。在 Linux 上，窗口保留创建时的阴影（`DisableShadow`）。
+- `SetVibrancyStyle` 在 macOS 上给材质定形状，用于自己绘制形状的透明窗口：从边缘内缩（给阴影留出空间的圆角浮窗），或者放在内容的某个 `Frame` 上，由应用随形状的弹动移动它（刘海下的架子；这时内容的帧和材质的移动一起呈现）；可以圆角、淡化、隐藏，或不论应用的外观都显示为深色。
 - `SetIcon(png)` 给窗口自己的图标，显示在标题栏和任务栏按钮中（Linux、Windows）。
 - `SetSkipTaskbar` 让窗口不出现在任务栏中（Linux、Windows）。
 - `SetAutoHideMenuBar` 隐藏菜单栏，直到按 Alt 或 F10，或永久重新显示它（Linux、Windows）。
@@ -395,6 +396,28 @@ mygo.App.WhenReady(func() {
 	})
 })
 ```
+
+### 不抢键盘的面板
+
+浮在别的应用上面的控件，例如会议录制工具浮在视频通话上的字幕和按钮，或者浮在用户正在输入的文字上的听写浮窗，被点击时不能把键盘从那个应用抢走。`PanelKeyboard` 决定面板何时获得键盘：
+
+| `PanelKeyboard` | 面板何时获得键盘 | 适用 |
+|---|---|---|
+| `PanelKeyboardAlways`（默认） | 显示、获得焦点或被点击时 | 启动器、快速输入 |
+| `PanelKeyboardForText` | 只在按下其原生 UI 的文本输入框时；别处的点击不动键盘 | 带一两个输入框的浮动控件 |
+| `PanelKeyboardNever` | 从不；其内容不能接收文字 | 浮窗（HUD）、取色器 |
+
+```go
+captions := mygo.NewWindow(mygo.WindowOptions{
+	Panel:         true,
+	PanelKeyboard: mygo.PanelKeyboardForText,
+	Hidden:        true,
+	Content:       view,
+})
+captions.ShowInactive() // Show and Focus would give it the keyboard
+```
+
+macOS 两者都支持（只在需要时才成为键窗口的 `NSPanel`；`PanelKeyboardNever` 则从不成为），而且不论哪种，别的应用在前台时面板都跟随指针。Windows 上 `PanelKeyboardNever` 的面板带 `WS_EX_NOACTIVATE`，以不激活的方式显示；其他取值以及 Linux 上的所有面板，都按默认方式获得键盘。
 
 结果会变多变少的面板（如启动器的）可以用 `FitContent` 采用其页面的大小，如同[浮出窗口](#让浮出窗口适应其内容)：给它 `MaxHeight`，而不是固定的 `Height`。
 

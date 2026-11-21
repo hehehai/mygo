@@ -46,6 +46,7 @@ var (
 	surfaceOnce       sync.Once
 	msgInitTracking   func(obj id, sel objc.SEL, r NSRect, options uint, owner, info id) id
 	msgTimer          func(cls id, sel objc.SEL, interval float64, target id, selector objc.SEL, info id, repeats bool) id
+	msgTimerBlock     func(cls id, sel objc.SEL, interval float64, repeats bool, block uintptr) id
 	cgColorSpaceSRGB  uintptr
 	cgImageCreate     uintptr
 	cgImageRelease    uintptr
@@ -84,6 +85,7 @@ func loadSurface() {
 	surfaceOnce.Do(func() {
 		purego.RegisterFunc(&msgInitTracking, msgSendAddr)
 		purego.RegisterFunc(&msgTimer, msgSendAddr)
+		purego.RegisterFunc(&msgTimerBlock, msgSendAddr)
 		cgImageCreate = mustDlsym(libCG, "CGImageCreate")
 		cgImageRelease = mustDlsym(libCG, "CGImageRelease")
 		cgProviderCreate = mustDlsym(libCG, "CGDataProviderCreateWithCFData")
@@ -381,6 +383,11 @@ func (s *surface) Native() platform.SurfaceNative {
 
 // ShowsMaterial reports whether the window has a material, whose effect
 // view, behind the surface, shows where its frames are transparent.
+// PresentsWithWindow reports whether the window shows its material at a
+// frame of the content's (platform.WindowSyncedSurface,
+// window.SetVibrancyStyle).
+func (s *surface) PresentsWithWindow() bool { return s.w != nil && s.w.framed }
+
 func (s *surface) ShowsMaterial() bool { return s.w.effect != 0 || s.w.popover != 0 }
 
 func (s *surface) scale() float64 {
@@ -789,6 +796,36 @@ func noCursor() id {
 		})
 	}
 	return hiddenCursor
+}
+
+// takeKeyFromPanel makes a window pressed the key window when a panel of
+// the app (WindowOptions.Panel: nonactivating) has the keyboard: AppKit
+// left it with the panel, so that what was typed next went to the
+// panel's text input, not to the window clicked (Refto's notch shelf
+// searching, its main window's search field clicked). A window that is
+// key already, a panel itself, a flyout, one hosted in another, or one
+// that cannot be key is left alone.
+func (w *window) takeKeyFromPanel() {
+	if w == nil || w.closed || w.host != nil || w.opts.Panel || w.opts.Flyout != nil || sendBool(w.win, "isKeyWindow") || !sendBool(w.win, "canBecomeKeyWindow") {
+		return
+	}
+	key := w.b.byNSWindow[send(w.b.app, "keyWindow")]
+	if key == nil || key == w || !key.opts.Panel {
+		return
+	}
+	send(w.win, "makeKeyWindow")
+}
+
+// TakeKeyboard makes a panel that takes the keyboard only for text
+// (platform.WindowOptions.KeyboardOnlyForText) the key window, without
+// activating the app, as one of its text inputs is pressed
+// (platform.KeyboardTaker): AppKit does not, as the surface's
+// needsPanelToBecomeKey is NO, so that its other controls leave the
+// keyboard with the app the user is in.
+func (s *surface) TakeKeyboard() {
+	if w := s.w; w != nil && !w.closed && w.opts.KeyboardOnlyForText && !sendBool(w.win, "isKeyWindow") {
+		send(w.win, "makeKeyWindow")
+	}
 }
 
 func (s *surface) SetCursor(c platform.Cursor) {
@@ -1206,6 +1243,7 @@ func registerSurfaceClass() {
 					// press.
 					s.w.pressedLeft(ev)
 				}
+				s.w.takeKeyFromPanel()
 				send(s.w.win, "makeFirstResponder:", uintptr(self))
 			}
 			s.mouse(kind, ev, btn)
@@ -1265,6 +1303,11 @@ func registerSurfaceClass() {
 		}),
 		method("acceptsFirstResponder", func(self id, _ objc.SEL) bool { return true }),
 		method("acceptsFirstMouse:", func(self id, _ objc.SEL, ev id) bool { return true }),
+		// A click on a panel that becomes the key window only if needed
+		// (platform.WindowOptions.KeyboardOnlyForText, or not Focusable)
+		// leaves the keyboard where it is, until a text input is pressed
+		// (TakeKeyboard).
+		method("needsPanelToBecomeKey", func(self id, _ objc.SEL) bool { return false }),
 		method("mouseDownCanMoveWindow", func(self id, _ objc.SEL) bool { return false }),
 		method("wantsUpdateLayer", func(self id, _ objc.SEL) bool { return true }),
 		method("updateLayer", func(self id, _ objc.SEL) {

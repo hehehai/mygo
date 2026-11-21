@@ -43,6 +43,9 @@ type headless struct {
 	opened        []string
 	// escapes counts the Escapes nothing handled.
 	escapes int
+	// keyboardTakes counts the presses of text inputs that asked the
+	// window for the keyboard (takeKeyboard).
+	keyboardTakes int
 	// stack is the system's stack of screens tests give the window.
 	stack platform.StackSurface
 	// titleDoubles counts the double clicks a DragWindow handle left to
@@ -143,6 +146,7 @@ func (h *headless) requestFrame()                              { h.requested.Sto
 func (h *headless) repaintTimer(at time.Time)                  { h.repaintAt = at }
 func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
+func (h *headless) takeKeyboard()                              { h.keyboardTakes++ }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
 func (h *headless) startDrag()                                 {}
 func (h *headless) setDropFormats([]transfer.Format)           {}
@@ -611,6 +615,15 @@ func (t *Tester) SetDirection(d Direction) {
 
 // Frame renders another frame, as when the view's state changed.
 func (t *Tester) Frame() { t.h.requested.Store(true); t.settle() }
+
+// AccessibilityOn has assistive technology read the window from now on,
+// as a screen reader turned on does as it first asks for the window's
+// tree, and settles: the view's Context.AccessibilityActive reports true
+// from the frame it builds.
+func (t *Tester) AccessibilityOn() {
+	t.rt.event(platform.SurfaceEvent{Kind: platform.AccessibilityOn})
+	t.settle()
+}
 
 // FramePending reports whether the view still asks for a frame, as one
 // that animates or never settles does after an input or Frame. The

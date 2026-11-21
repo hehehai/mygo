@@ -29,14 +29,18 @@ const (
 	styleFullSizeContentView = 1 << 15
 	styleNonactivatingPanel  = 1 << 7
 
-	nsBackingStoreBuffered   = 2
-	nsFloatingWindowLevel    = 3
-	nsPopUpMenuWindowLevel   = 101
+	nsBackingStoreBuffered = 2
+	nsFloatingWindowLevel  = 3
+	nsPopUpMenuWindowLevel = 101
+	// nsOverMenuBarWindowLevel is NSMainMenuWindowLevel + 3: above the menu
+	// bar (24) and its status items (25), below the menus (101).
+	nsOverMenuBarWindowLevel = 27
 	nsNormalWindowLevel      = 0
 	nsViewWidthHeightSizable = 2 | 16
 
 	collectionCanJoinAllSpaces    = 1 << 0
 	collectionTransient           = 1 << 3
+	collectionStationary          = 1 << 4
 	collectionIgnoresCycle        = 1 << 6
 	collectionFullScreenPrimary   = 1 << 7
 	collectionFullScreenAuxiliary = 1 << 8
@@ -66,6 +70,11 @@ type window struct {
 	// NSVisualEffectView, or an NSGlassEffectView when glass is.
 	effect id
 	glass  bool
+	// vstyle shapes the effect view (SetVibrancyStyle); framed tells that
+	// it shows at a Frame of the content's, which the content's frames
+	// then present with (surface.PresentsWithWindow).
+	vstyle platform.VibrancyStyle
+	framed bool
 	// keepActive is SetActiveAppearance's.
 	keepActive bool
 	// tint is the material's tint, which only NSGlassEffectView takes.
@@ -130,6 +139,12 @@ type window struct {
 	downloads     map[id][2]string // WKDownload: URL and path
 	attention     int              // the request of FlashFrame
 	maximized     bool
+	// behavior is the collection behavior a panel was made with (or
+	// SetVisibleOnAllWorkspaces gave it), which it is given again as it
+	// shows (rejoinSpaces), and rejoins counts the shows that found it off
+	// the Spaces it belongs on.
+	behavior uint
+	rejoins  int
 	// auxiliary tells that SetVisibleOnAllWorkspaces made a window that
 	// cannot go full screen an auxiliary of full-screen Spaces, to undo.
 	auxiliary     bool
@@ -243,6 +258,11 @@ func (w *window) create() {
 		// the style it is created with.
 		cls = "MyGoPanel"
 		style |= styleNonactivatingPanel
+		if o.OverMenuBar {
+			// Borderless: AppKit keeps a titled window's frame below the
+			// menu bar (constrainFrameRect:toScreen:).
+			style = styleNonactivatingPanel
+		}
 	}
 	w.win = msgInitWindow(send(class(cls), "alloc"), sel("initWithContentRect:styleMask:backing:defer:"),
 		content, style, nsBackingStoreBuffered, false)
@@ -285,13 +305,24 @@ func (w *window) create() {
 		// On the Space the user is on, full-screen ones included, as they
 		// switch, and out of Mission Control and the window cycle.
 		behavior = collectionCanJoinAllSpaces | collectionFullScreenAuxiliary | collectionIgnoresCycle | collectionTransient
+		if o.OverMenuBar {
+			// Where it is on every Space, without sliding as they switch.
+			behavior = behavior&^collectionTransient | collectionStationary
+		}
 		// A panel stays as the app is deactivated: the app hides it.
 		send(w.win, "setHidesOnDeactivate:", 0)
+		if o.KeyboardOnlyForText || !o.Focusable {
+			// Clicks do not take the keyboard (MyGoSurfaceView's
+			// needsPanelToBecomeKey); text inputs do (surface.TakeKeyboard)
+			// where the panel is Focusable at all (canBecomeKeyWindow).
+			send(w.win, "setBecomesKeyOnlyIfNeeded:", 1)
+		}
 	} else if w.modalToFlyout() {
 		// Where its flyout is, over another app in full screen too.
 		behavior = collectionFullScreenAuxiliary | collectionTransient
 	}
 	send(w.win, "setCollectionBehavior:", uintptr(behavior))
+	w.behavior = behavior
 	// A child window takes its parent's level when that is higher.
 	w.onTop = o.AlwaysOnTop
 	w.applyLevel()
@@ -1267,6 +1298,48 @@ func (w *window) Focus() {
 }
 
 func (w *window) Blur() { send(w.win, "orderBack:", 0) }
+
+// GiveUpKey lets the keyboard go from the key window
+// (platform.KeyGiver): orderBack: (Blur) leaves a window key, and a
+// nonactivating panel given the keyboard kept it, so that what was typed
+// went to a window no longer in use. While the app is the frontmost one —
+// NSApp's isActive says so too while one of its nonactivating panels is
+// key, so NSWorkspace is asked — its frontmost window that can take the
+// keyboard becomes key; otherwise the window resigns, leaving the keys to
+// the app in front, which is not changed.
+func (w *window) GiveUpKey() {
+	if w.closed || w.host != nil || !sendBool(w.win, "isKeyWindow") {
+		return
+	}
+	if next := w.keyHeir(); next != nil {
+		send(next.win, "makeKeyWindow")
+		return
+	}
+	send(w.win, "resignKeyWindow")
+}
+
+// keyHeir is the window that takes the keyboard w gives up: the app's
+// frontmost visible window, not minimized, not a panel nor a flyout, that
+// can be key — while the app is the frontmost one; else none.
+func (w *window) keyHeir() *window {
+	var heir *window
+	withPool(func() {
+		front := send(send(class("NSWorkspace"), "sharedWorkspace"), "frontmostApplication")
+		if front == 0 || sendInt(front, "processIdentifier") != os.Getpid() {
+			return
+		}
+		for _, nw := range arrayItems(send(w.b.app, "orderedWindows")) {
+			o := w.b.byNSWindow[nw]
+			if o == nil || o == w || o.closed || o.opts.Panel || o.opts.Flyout != nil || o.popover != 0 ||
+				!sendBool(nw, "isVisible") || sendBool(nw, "isMiniaturized") || !sendBool(nw, "canBecomeKeyWindow") {
+				continue
+			}
+			heir = o
+			return
+		}
+	})
+	return heir
+}
 func (w *window) IsFocused() bool {
 	return sendBool(w.win, "isKeyWindow")
 }
@@ -1383,6 +1456,52 @@ func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 		}
 	}
 	send(w.win, "setCollectionBehavior:", uintptr(behavior))
+	w.behavior = behavior
+}
+
+// rejoinSpaces gives a hidden panel its collection behavior again before
+// it shows: on every Space, the one the user is on included. On a Mac
+// with several desktops Inboxly's notch panel (OverMenuBar), made with
+// CanJoinAllSpaces, was found on one Space only, sliding away with it as
+// the user switched and showing there only, though a fresh panel made
+// the same way stays on all of them (macOS 26.7; the cause is not known;
+// an NSPanel whose sticky tag the window server lost, AppKit's
+// collectionBehavior unchanged, does it). Set without CanJoinAllSpaces
+// first, the behavior reaches the window server even if AppKit's own
+// value did not change; a hidden window bound to one Space is on every
+// Space again at once. A show that found another behavior, or the window
+// off the active Space, counts in SpaceInfo's Rejoined. A window that
+// shows stays where it is.
+func (w *window) rejoinSpaces() {
+	if !w.opts.Panel || w.behavior&collectionCanJoinAllSpaces == 0 || sendBool(w.win, "isVisible") {
+		return
+	}
+	if uint(sendInt(w.win, "collectionBehavior")) != w.behavior || !sendBool(w.win, "isOnActiveSpace") {
+		w.rejoins++
+	}
+	send(w.win, "setCollectionBehavior:", uintptr(w.behavior&^collectionCanJoinAllSpaces))
+	send(w.win, "setCollectionBehavior:", uintptr(w.behavior))
+}
+
+// SpaceInfo reads back what AppKit has of the window's Spaces
+// (platform.SpaceReader).
+func (w *window) SpaceInfo() platform.SpaceInfo {
+	if w.closed || w.win == 0 {
+		return platform.SpaceInfo{}
+	}
+	const occlusionStateVisible = 1 << 1
+	return platform.SpaceInfo{
+		Known:         true,
+		Number:        sendInt(w.win, "windowNumber"),
+		Visible:       sendBool(w.win, "isVisible"),
+		OnActiveSpace: sendBool(w.win, "isOnActiveSpace"),
+		Occluded:      sendInt(w.win, "occlusionState")&occlusionStateVisible == 0,
+		Behavior:      uint(sendInt(w.win, "collectionBehavior")),
+		Level:         sendInt(w.win, "level"),
+		Sharing:       sendInt(w.win, "sharingType"),
+		Style:         uint(sendInt(w.win, "styleMask")),
+		Rejoined:      w.rejoins,
+	}
 }
 
 // SetIcon does nothing: macOS windows show no icon of their own.
@@ -1453,6 +1572,7 @@ func (w *window) SetVibrancy(material string) {
 			if glass {
 				w.clearForGlass()
 			}
+			w.styleEffect()
 		}
 		if glass {
 			send(w.effect, "setStyle:", g.style)
@@ -1523,9 +1643,130 @@ func (w *window) removeEffect() {
 	if w.effect != 0 {
 		send(w.effect, "removeFromSuperview")
 		release(w.effect)
-		w.effect, w.glass = 0, false
+		w.effect, w.glass, w.framed = 0, false, false
 		w.restoreBacking()
 	}
+}
+
+// SetVibrancyStyle shapes the material (platform.VibrancyStyler); the
+// style holds for a material set later too.
+func (w *window) SetVibrancyStyle(s platform.VibrancyStyle) {
+	w.vstyle = s
+	withPool(w.styleEffect)
+}
+
+// styleEffect fits the effect view to vstyle, without Core Animation's
+// implicit animations: hidden, or its frame (a Frame of the content's,
+// from its top left, kept at its top as the window resizes; or the
+// content view's bounds, which it follows) inset by the style's insets,
+// its corners rounded by a mask image (a CALayer's corners do not clip a
+// behind-window blur everywhere), its alpha and its appearance. A Frame
+// shown has the content's frames present with Core Animation's
+// transaction (framed, surface.PresentsWithWindow), which commits these
+// changes too: a frame presented as soon as drawn showed a refresh before
+// or after the material moved, and a shape springing over it let it show
+// around its edge. The zero style is no style: the material fills the
+// window, as roundEffect rounds it.
+func (w *window) styleEffect() {
+	w.framed = false
+	if w.effect == 0 {
+		return
+	}
+	s := w.vstyle
+	tx := class("CATransaction")
+	send(tx, "begin")
+	send(tx, "setDisableActions:", 1)
+	defer send(tx, "commit")
+	if s.Hidden || s.Fade >= 1 {
+		send(w.effect, "setHidden:", 1)
+		return
+	}
+	b := msgRect(w.view, sel("bounds"))
+	f := b
+	mask := uintptr(nsViewWidthHeightSizable)
+	if r := s.Frame; r.Width > 0 && r.Height > 0 {
+		// The content view is not flipped.
+		f = NSRect{
+			Origin: NSPoint{X: float64(r.X), Y: b.Size.Height - float64(r.Y) - float64(r.Height)},
+			Size:   NSSize{Width: float64(r.Width), Height: float64(r.Height)},
+		}
+		mask = nsViewMinYMargin
+		w.framed = true
+	}
+	// Bottom is the origin's side.
+	f.Origin.X += s.Left
+	f.Origin.Y += s.Bottom
+	f.Size.Width = max(f.Size.Width-s.Left-s.Right, 0)
+	f.Size.Height = max(f.Size.Height-s.Top-s.Bottom, 0)
+	send(w.effect, "setAutoresizingMask:", mask)
+	msgSetRect(w.effect, sel("setFrame:"), f)
+	switch {
+	case s == platform.VibrancyStyle{}:
+		if w.glass {
+			msgSetFloat(w.effect, sel("setCornerRadius:"), float64(max(w.radius, 0)))
+		} else {
+			send(w.effect, "setMaskImage:", 0)
+			send(w.effect, "setAppearance:", 0)
+		}
+		w.roundEffect()
+	case w.glass:
+		msgSetFloat(w.effect, sel("setCornerRadius:"), s.Radius)
+	default:
+		var img id
+		if s.Radius > 0 {
+			img = vibrancyMask(s.Radius, s.Corners)
+		}
+		send(w.effect, "setMaskImage:", uintptr(img))
+		var appearance id
+		if s.Dark {
+			appearance = send(class("NSAppearance"), "appearanceNamed:", uintptr(nsString("NSAppearanceNameDarkAqua")))
+		}
+		send(w.effect, "setAppearance:", uintptr(appearance))
+	}
+	msgSetFloat(w.effect, sel("setAlphaValue:"), 1-max(s.Fade, 0))
+	send(w.effect, "setHidden:", 0)
+}
+
+// Corners of platform.VibrancyStyle.Corners.
+const (
+	cornerTopLeft = 1 << iota
+	cornerTopRight
+	cornerBottomLeft
+	cornerBottomRight
+)
+
+// vibrancyMask is a mask image for NSVisualEffectView: a rectangle with
+// corners of radius r (those of corners, all four for 0) that stay as
+// they are while its middle stretches to the view's size (cap insets).
+// Autoreleased.
+func vibrancyMask(r float64, corners uint8) id {
+	size := 2*r + 1
+	img := autorelease(msgInitSize(send(class("NSImage"), "alloc"), sel("initWithSize:"), NSSize{Width: size, Height: size}))
+	send(img, "lockFocus")
+	send(send(class("NSColor"), "blackColor"), "set")
+	path := class("NSBezierPath")
+	send(msgRectRadii(path, sel("bezierPathWithRoundedRect:xRadius:yRadius:"), NSRect{Size: NSSize{Width: size, Height: size}}, r, r), "fill")
+	if corners != 0 {
+		// The corners left square: the image is not flipped.
+		for _, c := range []struct {
+			bit  uint8
+			x, y float64
+		}{
+			{cornerTopLeft, 0, size - r},
+			{cornerTopRight, size - r, size - r},
+			{cornerBottomLeft, 0, 0},
+			{cornerBottomRight, size - r, 0},
+		} {
+			if corners&c.bit == 0 {
+				send(msgInitRect(path, sel("bezierPathWithRect:"), NSRect{Origin: NSPoint{X: c.x, Y: c.y}, Size: NSSize{Width: r, Height: r}}), "fill")
+			}
+		}
+	}
+	send(img, "unlockFocus")
+	// NSEdgeInsets (top, left, bottom, right) has NSRect's layout.
+	msgSetRect(img, sel("setCapInsets:"), NSRect{Origin: NSPoint{X: r, Y: r}, Size: NSSize{Width: r, Height: r}})
+	send(img, "setResizingMode:", 1) // NSImageResizingModeStretch
+	return img
 }
 
 // clearForGlass makes a window that is not transparent clear while it
@@ -2381,10 +2622,15 @@ func registerWindowClasses() {
 	})
 
 	// A panel (WindowOptions.Panel) takes the keyboard, without
-	// activating the app, and is never the main window.
+	// activating the app, and is never the main window. One that is not
+	// Focusable (mygo.PanelKeyboardNever) never takes it: clicks reach its
+	// content and leave the app in front, and its first responder, alone.
 	classDef("MyGoPanel", "NSPanel", nil, []objc.MethodDef{
 		method("orderWindow:relativeTo:", orderWindowRelativeTo("MyGoPanel")),
-		method("canBecomeKeyWindow", func(self id, _ objc.SEL) bool { return true }),
+		method("canBecomeKeyWindow", func(self id, _ objc.SEL) bool {
+			w := theBackend.byNSWindow[self]
+			return w == nil || w.opts.Focusable
+		}),
 		method("canBecomeMainWindow", func(self id, _ objc.SEL) bool { return false }),
 		// NSPanel closes on an Escape its content leaves (cancelOperation:),
 		// past windowShouldClose: MyGo closes it then, as the user closing

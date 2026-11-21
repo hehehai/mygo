@@ -251,6 +251,22 @@ type AppHandler interface {
 	MemoryWarning()
 }
 
+// LaunchReader is an AppController that tells whether the system started
+// the app to open URLs or files (macOS: not its default launch, or URLs
+// and files came while it launched); they come once it finished
+// launching. mygo.App.WasLaunchedToOpen.
+type LaunchReader interface {
+	LaunchedToOpen() bool
+}
+
+// BackgroundLaunch is an AppController that tells whether the system
+// started the app and left it in the background (macOS: open -g, a launch
+// told not to switch to it). The core then shows the windows of its first
+// moments without the focus, as `mygo dev -background` does.
+type BackgroundLaunch interface {
+	LaunchedInBackground() bool
+}
+
 // AppController exposes application level native features.
 type AppController interface {
 	SetActivationPolicy(policy string)
@@ -463,6 +479,14 @@ type WindowOptions struct {
 	// ones included, out of the taskbar and the app switcher, and on macOS
 	// takes the keyboard without activating the app.
 	Panel bool
+	// KeyboardOnlyForText keeps clicks on a Panel from giving it the
+	// keyboard, but those on a text input of its content, which ask for it
+	// (KeyboardTaker; mygo.PanelKeyboardForText). A Panel that never takes
+	// the keyboard (mygo.PanelKeyboardNever) is one that is not Focusable.
+	KeyboardOnlyForText bool
+	// OverMenuBar lets a Panel go over the menu bar
+	// (mygo.WindowOptions.OverMenuBar).
+	OverMenuBar bool
 
 	// UserScripts are injected into every page, in order.
 	UserScripts []UserScript
@@ -1259,6 +1283,13 @@ type LaterClipboard interface {
 	WriteTextThen(text string, done func(error))
 }
 
+// AnyThreadTrash is a Shell whose TrashItem and TrashItemResult may be
+// called on any thread: mygo.Shell.TrashItem then calls it where it is
+// called, without waiting for the main thread.
+type AnyThreadTrash interface {
+	TrashesOnAnyThread()
+}
+
 // Shell integrates with the desktop environment.
 type Shell interface {
 	OpenExternal(url string) error
@@ -1308,12 +1339,99 @@ type Display struct {
 	Rotation    int
 	Internal    bool
 	Primary     bool
+	// Notch is the camera housing at the top of the display, in screen
+	// coordinates; zero without one.
+	Notch Rect
 }
 
 // Screen queries monitors.
 type Screen interface {
 	Displays() []Display
 	CursorPoint() Point
+}
+
+// SpaceReader is a Window that tells where it is among the Spaces (the
+// virtual desktops) and what decides it: mygo.Window.SpaceInfo. Only
+// macOS has it.
+type SpaceReader interface {
+	SpaceInfo() SpaceInfo
+}
+
+// SpaceInfo is mygo.SpaceInfo.
+type SpaceInfo struct {
+	Known         bool
+	Number        int
+	Visible       bool
+	OnActiveSpace bool
+	Occluded      bool
+	Behavior      uint
+	Level         int
+	Sharing       int
+	Style         uint
+	Rejoined      int
+}
+
+// VibrancyStyle shapes a window's material (mygo.VibrancyStyle): Frame,
+// in the content's points from its top left (zero: the whole content),
+// inset by Top, Right, Bottom and Left; its Corners (bits: top left, top
+// right, bottom left, bottom right; 0 all) rounded by Radius; faded by
+// Fade (0 to 1), hidden by Hidden; Dark shows it in the dark appearance.
+type VibrancyStyle struct {
+	Top, Right, Bottom, Left float64
+	Frame                    Rect
+	Radius                   float64
+	Corners                  uint8
+	Fade                     float64
+	Hidden                   bool
+	Dark                     bool
+}
+
+// VibrancyStyler is a Window whose material (SetVibrancy) can be shaped.
+// Only macOS has it.
+type VibrancyStyler interface {
+	SetVibrancyStyle(s VibrancyStyle)
+}
+
+// KeyGiver is a Window that can let the keyboard go without bringing an
+// app or a window forward (mygo.Window.GiveUpKey; macOS).
+type KeyGiver interface {
+	GiveUpKey()
+}
+
+// PointerWatcher is a Screen that tells where the pointer is while it
+// moves in any app (macOS).
+type PointerWatcher interface {
+	// WatchPointer calls fn on the main thread with the pointer in screen
+	// coordinates at each move, drag, press and release of the primary
+	// button, in any app, and whether content (files, links, text) is
+	// being dragged; stop ends it.
+	WatchPointer(fn func(p Point, dragging bool)) (stop func())
+}
+
+// PointerRefresher is a PointerWatcher that reads the pointer when asked
+// (mygo.PointerWatcher.Refresh), and repairs what it keeps for the
+// watchers: a drag it still believes in with the primary button up ends,
+// and the pointer is read on a timer again where it should be.
+type PointerRefresher interface {
+	RefreshPointer() PointerNow
+}
+
+// PointerNow is the pointer as RefreshPointer read it, and the state of
+// the backend's watching after its repairs.
+type PointerNow struct {
+	Point    Point
+	Buttons  int  // the mouse buttons down, bit 0 the primary one
+	Dragging bool // content is dragged (after the repair)
+	// Unstuck: a drag was believed in with the primary button up; it ended.
+	Unstuck bool
+	// Active: the app is active. Polling: the pointer is read on a timer
+	// (while it is). Repolled: that timer was missing and was started.
+	Active, Polling, Repolled bool
+	// Monitors: the event monitors are there. Watchers: how many watch.
+	Monitors bool
+	Watchers int
+	// DragTimer: the timer that waits for a drag's end runs.
+	DragTimer bool
 }
 
 // Theme reads and overrides the system appearance.

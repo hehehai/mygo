@@ -275,6 +275,12 @@ Other properties:
   changes the material of a window created with one, and shows none in
   other windows. On Linux, a window keeps the shadow it was created with
   (`DisableShadow`).
+- `SetVibrancyStyle` shapes the material on macOS, for a transparent
+  window that draws a shape of its own: inset from the edges (a rounded
+  HUD with room for its shadow), or at a `Frame` of the content that the
+  app moves as its shape springs (a notch's shelf; the content's frames
+  then present with the material's moves), its corners rounded, faded,
+  hidden, or dark whatever the app's appearance.
 - `SetIcon(png)` gives the window its own icon in its title bar and taskbar
   button (Linux, Windows).
 - `SetSkipTaskbar` hides the window from the taskbar (Linux, Windows).
@@ -659,6 +665,35 @@ mygo.App.WhenReady(func() {
 	})
 })
 ```
+
+### Panels that leave the keyboard alone
+
+Controls that float over another app, as a meeting recorder's captions
+and buttons over a video call, or a dictation HUD over the text the user
+types into, must take a click without taking the keyboard from that app.
+`PanelKeyboard` says when a panel takes it:
+
+| `PanelKeyboard` | the panel takes the keyboard | for |
+|---|---|---|
+| `PanelKeyboardAlways` (default) | as it shows, is focused or clicked | launchers, quick entry |
+| `PanelKeyboardForText` | only as a text input of its native UI is pressed; other clicks leave it where it is | floating controls with a field or two |
+| `PanelKeyboardNever` | never; its content cannot take text | HUDs, pickers |
+
+```go
+captions := mygo.NewWindow(mygo.WindowOptions{
+	Panel:         true,
+	PanelKeyboard: mygo.PanelKeyboardForText,
+	Hidden:        true,
+	Content:       view,
+})
+captions.ShowInactive() // Show and Focus would give it the keyboard
+```
+
+macOS honors both (an `NSPanel` that becomes the key window only if
+needed; one that never does for `PanelKeyboardNever`), and a panel follows
+the pointer while another app is active either way. On Windows a
+`PanelKeyboardNever` panel has `WS_EX_NOACTIVATE` and shows inactive; the
+others, and every panel on Linux, take the keyboard as by default.
 
 A panel whose results grow and shrink, as a launcher's, takes its page's
 size with `FitContent`, as [a flyout](#size-a-flyout-to-its-content)

@@ -108,6 +108,9 @@ type Backend struct {
 	URLSchemes map[string]string
 	// LoginItem is the command that starts the app at login: "id name arg".
 	LoginItem string
+	// LaunchedToOpen is what App.WasLaunchedToOpen reports;
+	// LaunchedInBackground is platform.BackgroundLaunch's.
+	LaunchedToOpen, LaunchedInBackground bool
 	// DockMenu is the menu of the Dock icon.
 	DockMenu *platform.Menu
 	// Active is what App.IsActive answers; SetActive changes it.
@@ -628,6 +631,14 @@ type Window struct {
 	// InputRegion is what SetInputRegion set last: nil for all of the
 	// window.
 	InputRegion []platform.Rect
+	// GaveUpKey counts the calls of GiveUpKey; KeyHeir, when set, is the
+	// window that takes the keyboard it gives up (the app's frontmost one).
+	GaveUpKey int
+	KeyHeir   *Window
+	// VibrancyStyle is what SetVibrancyStyle set last.
+	VibrancyStyle platform.VibrancyStyle
+	// Spaces is what SpaceInfo reports (tests set it).
+	Spaces platform.SpaceInfo
 	// AsyncFunction answers CallAsyncFunction.
 	AsyncFunction func(body string) (string, error)
 	// AsyncCallback, when set, receives CallAsyncFunction calls to answer
@@ -782,6 +793,29 @@ func (w *Window) Hide()           { w.mu.Lock(); w.visible = false; w.mu.Unlock(
 func (w *Window) IsVisible() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.visible }
 func (w *Window) Focus()          { w.H.Focused() }
 func (w *Window) Blur()           { w.H.Blurred() }
+
+// GiveUpKey, as on macOS (platform.KeyGiver): a window that has the
+// keyboard resigns (OnBlur); KeyHeir, shown, takes it (OnFocus), as AppKit
+// makes the app's frontmost window key. Blur, unlike macOS's, blurs the
+// window still.
+func (w *Window) GiveUpKey() {
+	w.mu.Lock()
+	had := w.focused
+	w.focused = false
+	w.GaveUpKey++
+	heir := w.KeyHeir
+	w.mu.Unlock()
+	if !had {
+		return
+	}
+	w.H.Blurred()
+	if heir != nil && heir != w && heir.IsVisible() && !heir.IsClosed() {
+		heir.mu.Lock()
+		heir.focused = true
+		heir.mu.Unlock()
+		heir.H.Focused()
+	}
+}
 func (w *Window) IsFocused() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.focused }
 
 // CornerRadius is the frameless window's WindowOptions.CornerRadius, as
@@ -824,6 +858,19 @@ func (w *Window) SetActiveAppearance(v bool)      { w.mu.Lock(); w.active = v; w
 func (w *Window) SetWindowButtonsTheme(string) {}
 
 func (w *Window) SetInputRegion(r []platform.Rect) { w.mu.Lock(); w.InputRegion = r; w.mu.Unlock() }
+
+// SpaceInfo is platform.SpaceReader's: what the test set in Spaces.
+func (w *Window) SpaceInfo() platform.SpaceInfo {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.Spaces
+}
+
+func (w *Window) SetVibrancyStyle(s platform.VibrancyStyle) {
+	w.mu.Lock()
+	w.VibrancyStyle = s
+	w.mu.Unlock()
+}
 
 // ActiveAppearance reports what SetActiveAppearance set last.
 func (w *Window) ActiveAppearance() bool             { w.mu.Lock(); defer w.mu.Unlock(); return w.active }
@@ -1114,6 +1161,17 @@ func (a app) OpenAtLogin(id, name, arg string) bool {
 
 func (app) OpenedAtLogin() bool { return false }
 
+// LaunchedInBackground is platform.BackgroundLaunch's:
+// Backend.LaunchedInBackground.
+func (a app) LaunchedInBackground() bool {
+	a.b.mu.Lock()
+	defer a.b.mu.Unlock()
+	return a.b.LaunchedInBackground
+}
+
+// LaunchedToOpen is platform.LaunchReader's: Backend.LaunchedToOpen.
+func (a app) LaunchedToOpen() bool { a.b.mu.Lock(); defer a.b.mu.Unlock(); return a.b.LaunchedToOpen }
+
 func (a app) SetDockMenu(m *platform.Menu) { a.b.mu.Lock(); a.b.DockMenu = m; a.b.mu.Unlock() }
 
 func (a app) IsURLSchemeRegistered(scheme, id, name string) bool {
@@ -1394,9 +1452,69 @@ func (screen) Displays() []platform.Display {
 		ID: 1, Label: "Fake", Primary: true, ScaleFactor: 2,
 		Bounds:   platform.Rect{Width: 1440, Height: 900},
 		WorkArea: platform.Rect{Y: 25, Width: 1440, Height: 875},
+		Notch:    platform.Rect{X: 630, Width: 180, Height: 25},
 	}}
 }
 func (screen) CursorPoint() platform.Point { return platform.Point{X: 10, Y: 20} }
+
+// pointerWatchers are WatchPointer's callbacks (MovePointer calls them).
+var (
+	pointerMu       sync.Mutex
+	pointerWatchers = map[int]func(platform.Point, bool){}
+	pointerWatchID  int
+)
+
+func (screen) WatchPointer(fn func(platform.Point, bool)) (stop func()) {
+	pointerMu.Lock()
+	defer pointerMu.Unlock()
+	pointerWatchID++
+	n := pointerWatchID
+	pointerWatchers[n] = fn
+	return func() {
+		pointerMu.Lock()
+		delete(pointerWatchers, n)
+		pointerMu.Unlock()
+	}
+}
+
+// pointerNow is what RefreshPointer reads (SetPointerNow).
+var pointerNow platform.PointerNow
+
+// SetPointerNow sets what the pointer's watchers read when refreshed
+// (platform.PointerRefresher): where the pointer is, the buttons down and
+// whether a drag is believed in (ended there when the primary button is
+// up, as macOS's backend does).
+func (b *Backend) SetPointerNow(n platform.PointerNow) {
+	pointerMu.Lock()
+	pointerNow = n
+	pointerMu.Unlock()
+}
+
+func (screen) RefreshPointer() platform.PointerNow {
+	pointerMu.Lock()
+	defer pointerMu.Unlock()
+	n := pointerNow
+	if n.Dragging && n.Buttons&1 == 0 {
+		n.Dragging, n.Unstuck = false, true
+		pointerNow.Dragging = false
+	}
+	n.Monitors, n.Watchers = len(pointerWatchers) > 0, len(pointerWatchers)
+	return n
+}
+
+// MovePointer tells the pointer's watchers (platform.PointerWatcher) it
+// is at p, dragging content or not. Call it on the main thread.
+func (b *Backend) MovePointer(p platform.Point, dragging bool) {
+	pointerMu.Lock()
+	fns := make([]func(platform.Point, bool), 0, len(pointerWatchers))
+	for _, fn := range pointerWatchers {
+		fns = append(fns, fn)
+	}
+	pointerMu.Unlock()
+	for _, fn := range fns {
+		fn(p, dragging)
+	}
+}
 
 // WindowButtons returns StartButtons and EndButtons, as Linux's desktop
 // layout gives them (platform.WindowButtonsBackend).

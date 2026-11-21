@@ -66,6 +66,14 @@ type Backend struct {
 	// openedAtLogin records whether the system started the app as a login
 	// item (WasOpenedAtLogin).
 	openedAtLogin bool
+	// launchedToOpen records whether the system started the app to open
+	// URLs or files (LaunchedToOpen); finishedLaunching that
+	// applicationDidFinishLaunching: came, openedEarly that URLs or files
+	// came before it (the launch was for them).
+	launchedToOpen, finishedLaunching, openedEarly bool
+	// launchedBehind: LaunchServices started the app and left it in the
+	// background (launchFront).
+	launchedBehind bool
 	// dockMenu is returned by applicationDockMenu: (retained).
 	dockMenu      id
 	dockMenuOwner int
@@ -307,11 +315,10 @@ func registerAppDelegate() {
 		}),
 		method("applicationDidFinishLaunching:", func(self id, _ objc.SEL, n id) {
 			b := theBackend
-			if send(b.app, "activationPolicy") == nsApplicationActivationPolicyRegular && !b.background {
-				// Plain executables (go run) do not come to the front on
-				// their own.
-				send(b.app, "activateIgnoringOtherApps:", 1)
-			}
+			b.finishedLaunching = true
+			b.launchedToOpen = b.openedEarly || !launchIsDefault(n) && !launchEventOpensApp()
+			b.launchFront(send(b.app, "activationPolicy") == nsApplicationActivationPolicyRegular,
+				launchedByLaunchd(), sendBool(b.app, "isActive"))
 			b.h.Ready()
 		}),
 		// terminate: (Cmd+Q and the Quit menu item) ends up here. Rather
@@ -359,6 +366,9 @@ func registerAppDelegate() {
 			theBackend.h.DidResignActive()
 		}),
 		method("application:openURLs:", func(self id, _ objc.SEL, app id, urls id) {
+			if !theBackend.finishedLaunching {
+				theBackend.openedEarly = true
+			}
 			var files, links []string
 			for _, u := range arrayItems(urls) {
 				if sendBool(u, "isFileURL") {

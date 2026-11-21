@@ -57,6 +57,32 @@ type Size struct{ Width, Height int }
 // the top-left corner of the primary display).
 type Rectangle struct{ X, Y, Width, Height int }
 
+// PanelKeyboard says when a panel (WindowOptions.Panel) takes the
+// keyboard. A panel never activates the app, whichever it is.
+type PanelKeyboard int
+
+const (
+	// PanelKeyboardAlways gives the panel the keyboard as it shows, is
+	// focused or is clicked, as a launcher's (Spotlight, Raycast).
+	PanelKeyboardAlways PanelKeyboard = iota
+	// PanelKeyboardForText gives the panel the keyboard only as a text
+	// input of its native UI is pressed: a click elsewhere on it, as on a
+	// button, leaves the keyboard with the app the user is in, as the
+	// controls and captions that float over a video call do, so the user
+	// can press them without losing their place in what they type. Show it
+	// with ShowInactive (Show and Focus give it the keyboard). macOS;
+	// elsewhere it is PanelKeyboardAlways.
+	PanelKeyboardForText
+	// PanelKeyboardNever makes a panel that never takes the keyboard: a
+	// press on it reaches its content while the app in front keeps the
+	// focus and its caret, as a floating HUD over the text the user types
+	// into (dictation, a color picker) needs. Its content cannot take the
+	// keyboard: no text inputs. On macOS the panel never becomes the key or
+	// main window; on Windows it has WS_EX_NOACTIVATE; Linux takes it as
+	// PanelKeyboardAlways.
+	PanelKeyboardNever
+)
+
 // WindowOptions configures NewWindow. The zero value is a visible,
 // resizable 800x600 window centered on screen.
 type WindowOptions struct {
@@ -204,8 +230,21 @@ type WindowOptions struct {
 	// app switcher. It cannot be minimized, maximized or go full screen. On
 	// macOS, showing or focusing it gives it the keyboard without
 	// activating the app, so the app the user was in stays active and gets
-	// the keyboard back when the panel hides.
+	// the keyboard back when the panel hides. PanelKeyboard tells when it
+	// takes the keyboard.
 	Panel bool
+	// PanelKeyboard says when a Panel takes the keyboard: as it shows and
+	// as it is clicked (PanelKeyboardAlways, the default), only as a text
+	// input of its native UI is pressed (PanelKeyboardForText), or never
+	// (PanelKeyboardNever). It changes nothing without Panel.
+	PanelKeyboard PanelKeyboard
+	// OverMenuBar lets a Panel go over the menu bar, as the shelves that
+	// unfold from the MacBook's notch (Display.Notch) do: on macOS it has
+	// no title bar (AppKit would keep a titled window below the menu bar),
+	// floats above the menu bar and its status items but below the menus
+	// they open, and stays put as the user switches Spaces. It changes
+	// nothing elsewhere or without Panel.
+	OverMenuBar bool
 
 	// Page configures the window's web page.
 	Page PageOptions
@@ -783,6 +822,13 @@ func (w *Window) platformOptions(o *WindowOptions) *platform.WindowOptions {
 	if o.Panel {
 		p.Minimizable, p.Maximizable, p.Fullscreenable = false, false, false
 		p.AlwaysOnTop, p.SkipTaskbar = true, true
+		p.OverMenuBar = o.OverMenuBar
+		switch o.PanelKeyboard {
+		case PanelKeyboardForText:
+			p.KeyboardOnlyForText = true
+		case PanelKeyboardNever:
+			p.Focusable = false
+		}
 	}
 	if p.Title == "" {
 		p.Title = App.Name()
@@ -1033,6 +1079,28 @@ func (w *Window) showInactive() {
 // app becomes the active one. Main thread only.
 var backgroundShow = devBackground
 
+// launchQuiet is how long after a launch the system left in the
+// background the windows the app shows keep it there (keepBehind): those
+// it opens as it starts; one shown later, which the user asked for,
+// brings it to the front.
+var launchQuiet = 5 * time.Second
+
+// keepBehind shows the windows of the app's first launchQuiet without the
+// focus (backgroundShow) when the system started it and left it in the
+// background (platform.BackgroundLaunch: open -g on macOS), until one of
+// them takes the focus or the app becomes the active one, as for `mygo
+// dev -background`. Main thread only.
+func (a *Application) keepBehind() {
+	b, ok := backend().App().(platform.BackgroundLaunch)
+	if !ok || !b.LaunchedInBackground() || backgroundShow {
+		return
+	}
+	backgroundShow = true
+	time.AfterFunc(launchQuiet, func() {
+		postMain(func() { backgroundShow = backgroundShow && devBackground })
+	})
+}
+
 // fitShow sizes a hidden flyout of native UI that takes its content's
 // size to that content before it shows (fitContent.show). Main thread
 // only.
@@ -1072,6 +1140,24 @@ func (w *Window) Focus() { w.do(platform.Window.Focus) }
 
 // Blur removes focus from the window.
 func (w *Window) Blur() { w.do(platform.Window.Blur) }
+
+// GiveUpKey lets the keyboard go from the window, when it has it, without
+// bringing anything forward: what Blur does not do on macOS, where it
+// sends the window back and leaves it key. It is for a panel
+// (WindowOptions.Panel) that took the keyboard for a while — a text input
+// pressed, a search opened — and gives it back as that closes. While the
+// app is the frontmost one, its frontmost visible window that is not a
+// panel nor a flyout and can take the keyboard becomes the key window (as
+// AppKit picks one when a key window closes); otherwise the window just
+// resigns, the app is not activated. On Linux, Windows and the web it
+// does nothing.
+func (w *Window) GiveUpKey() {
+	w.do(func(n platform.Window) {
+		if k, ok := n.(platform.KeyGiver); ok {
+			k.GiveUpKey()
+		}
+	})
+}
 
 // IsFocused reports whether the window has keyboard focus.
 func (w *Window) IsFocused() bool { return get(w, platform.Window.IsFocused) }
@@ -1451,6 +1537,63 @@ func (w *Window) SetVibrancy(v Vibrancy) {
 	w.Invalidate()
 }
 
+// VibrancyCorners picks the corners of a VibrancyStyle that its Radius
+// rounds; none picked rounds all four.
+type VibrancyCorners uint8
+
+const (
+	VibrancyTopLeft VibrancyCorners = 1 << iota
+	VibrancyTopRight
+	VibrancyBottomLeft
+	VibrancyBottomRight
+)
+
+// VibrancyStyle shapes a window's material (WindowOptions.Vibrancy,
+// SetVibrancy) on macOS, for a transparent window that draws a shape of
+// its own and wants the blur behind the shape only. The zero value fills
+// the window, as without a style.
+type VibrancyStyle struct {
+	// Top, Right, Bottom and Left inset the material, in DIPs, from the
+	// edges of Frame: a rounded HUD with room for its own shadow around it
+	// insets it by that room.
+	Top, Right, Bottom, Left float64
+	// Frame places the material in the window's content, in DIPs from its
+	// top left corner, where it stays as the window resizes: a shape that
+	// springs between sizes in a fixed window (a notch's shelf) gives its
+	// frame as it changes, and the content's frames present with the
+	// material's moves then, so that the two show together. The zero
+	// Rectangle is the whole content, which the material follows as the
+	// window resizes.
+	Frame Rectangle
+	// Radius rounds the material's Corners, all four if none.
+	Radius  float64
+	Corners VibrancyCorners
+	// Fade fades the material, from 0 (all of it) to 1 (none). A material
+	// faded lets what is behind the window show through it sharp, rather
+	// than blurring it less.
+	Fade float64
+	// Hidden hides the material, until a style that does not.
+	Hidden bool
+	// Dark shows the material as in the dark appearance whatever the
+	// app's, for a HUD that stays dark over anything.
+	Dark bool
+}
+
+// SetVibrancyStyle shapes the window's material (see VibrancyStyle); it
+// holds for a material set later too. macOS; elsewhere it does nothing.
+func (w *Window) SetVibrancyStyle(s VibrancyStyle) {
+	ps := platform.VibrancyStyle{
+		Top: s.Top, Right: s.Right, Bottom: s.Bottom, Left: s.Left,
+		Frame:  platform.Rect{X: s.Frame.X, Y: s.Frame.Y, Width: s.Frame.Width, Height: s.Frame.Height},
+		Radius: s.Radius, Corners: uint8(s.Corners), Fade: s.Fade, Hidden: s.Hidden, Dark: s.Dark,
+	}
+	w.do(func(n platform.Window) {
+		if v, ok := n.(platform.VibrancyStyler); ok {
+			v.SetVibrancyStyle(ps)
+		}
+	})
+}
+
 // SetVibrancyTint tints the window's material, in the syntax of
 // BackgroundColor, or "" to remove the tint. Only macOS 26's Liquid Glass
 // takes one; other materials and platforms ignore it. See
@@ -1556,6 +1699,52 @@ func (w *Window) SetMenu(m *Menu) {
 // Windows). See WindowOptions.AutoHideMenuBar.
 func (w *Window) SetAutoHideMenuBar(v bool) {
 	w.do(func(n platform.Window) { n.SetAutoHideMenu(v) })
+}
+
+// SpaceInfo is where macOS has a window among the Spaces (the virtual
+// desktops, full-screen apps' included) and what decides it, read back
+// from AppKit, for an app's diagnostics: Window.SpaceInfo. Known is false
+// elsewhere, and for a window not made yet or closed.
+type SpaceInfo struct {
+	Known bool
+	// Number is the window server's number of the window.
+	Number int
+	// Visible: the window is ordered in (isVisible); OnActiveSpace: it is
+	// on the Space the user is on (isOnActiveSpace); Occluded: no part of
+	// it can be seen (occlusionState).
+	Visible, OnActiveSpace, Occluded bool
+	// Behavior is the NSWindowCollectionBehavior AppKit has (1 can join
+	// all Spaces, 1<<4 stationary, …), Level the window level, Sharing the
+	// NSWindowSharingType (0: kept out of screenshots), Style the
+	// NSWindowStyleMask.
+	Behavior uint
+	Level    int
+	Sharing  int
+	Style    uint
+	// Rejoined counts the shows of a panel that found it off the Spaces
+	// it belongs on (another behavior, or not on the active Space while
+	// it should be on all of them): it was given its behavior again.
+	Rejoined int
+}
+
+func (s SpaceInfo) String() string {
+	if !s.Known {
+		return "unknown"
+	}
+	return fmt.Sprintf("window %d visible %v onActiveSpace %v occluded %v behavior %#x level %d sharing %d style %#x rejoined %d",
+		s.Number, s.Visible, s.OnActiveSpace, s.Occluded, s.Behavior, s.Level, s.Sharing, s.Style, s.Rejoined)
+}
+
+// SpaceInfo reads where the window is among the Spaces and what decides
+// it (SpaceInfo). macOS; elsewhere the zero SpaceInfo.
+func (w *Window) SpaceInfo() SpaceInfo {
+	return get(w, func(n platform.Window) SpaceInfo {
+		r, ok := n.(platform.SpaceReader)
+		if !ok {
+			return SpaceInfo{}
+		}
+		return SpaceInfo(r.SpaceInfo())
+	})
 }
 
 // NativeHandle returns the native window: NSWindow* on macOS, GtkWindow* on

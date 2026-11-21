@@ -55,14 +55,28 @@ func (ShellModule) ShowItemInFolder(path string) {
 // and would be deleted permanently instead: on Windows one too big for the
 // recycle bin, or on a drive without one, as network shares are.
 // In the rare case Windows deletes it for good all the same, TrashItem
-// fails and says it was deleted.
+// fails and says it was deleted. It may be called on any goroutine; on
+// macOS it does not wait for the main thread (the system's file manager
+// is safe on any thread), so a goroutine holding a lock the main thread
+// waits for can trash a file.
 func (ShellModule) TrashItem(path string) error {
 	needsApp("Shell.TrashItem")
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
+	if sh := backend().Shell(); anyThreadTrash(sh) {
+		return sh.TrashItem(abs)
+	}
 	return onMainValue(func() error { return backend().Shell().TrashItem(abs) })
+}
+
+// anyThreadTrash tells that sh trashes on any thread
+// (platform.AnyThreadTrash): TrashItem and TrashItemResult call it where
+// they are called.
+func anyThreadTrash(sh platform.Shell) bool {
+	_, ok := sh.(platform.AnyThreadTrash)
+	return ok
 }
 
 // TrashItemResult moves a file or directory to the trash and returns the
@@ -77,12 +91,16 @@ func (ShellModule) TrashItem(path string) error {
 //
 // On macOS the returned path is where the system left the item, which may
 // not be the same name as the input: Finder renames an item that collides
-// with one already in the trash ("foo.txt" -> "foo 2.txt").
+// with one already in the trash ("foo.txt" -> "foo 2.txt"). As TrashItem,
+// it does not wait for the main thread on macOS.
 func (ShellModule) TrashItemResult(path string) (string, error) {
 	needsApp("Shell.TrashItemResult")
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
+	}
+	if sh := backend().Shell(); anyThreadTrash(sh) {
+		return sh.TrashItemResult(abs)
 	}
 	var trashPath string
 	err = onMainValue(func() error {
@@ -297,6 +315,11 @@ type Display struct {
 	Rotation    int
 	Internal    bool
 	Primary     bool
+	// Notch is the camera housing at the top of a MacBook's built-in
+	// display, in screen coordinates: the part of the menu bar's height
+	// between the areas left and right of it, which nothing can show in.
+	// It is zero on displays without one, and on other platforms.
+	Notch Rectangle
 }
 
 // ScreenModule queries displays.
@@ -322,6 +345,7 @@ func (s *ScreenModule) Displays() []Display {
 				Rotation:    d.Rotation,
 				Internal:    d.Internal,
 				Primary:     d.Primary,
+				Notch:       Rectangle(d.Notch),
 			})
 		}
 		return out

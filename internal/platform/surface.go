@@ -124,6 +124,18 @@ type GlassSurface interface {
 	PlaceGlass(places []GlassPlacement)
 }
 
+// WindowSyncedSurface is a Surface whose frames show with its window's
+// other changes while it says so: native views moving with the content,
+// as the material a window shows at a frame of the content's
+// (VibrancyStyle.Frame), which a frame presented on its own showed a
+// refresh before or after them.
+type WindowSyncedSurface interface {
+	// PresentsWithWindow reports whether the next frame should present
+	// with the window's changes made meanwhile (Core Animation's
+	// transaction on macOS), not as soon as drawn.
+	PresentsWithWindow() bool
+}
+
 // MaterialSurface is a Surface whose window can show a material
 // (vibrancy) behind the content, wherever its frames are transparent.
 type MaterialSurface interface {
@@ -170,6 +182,16 @@ type FrameRateSurface interface {
 type ImmediateFrameSurface interface {
 	// FramesAtOnce marks the surface.
 	FramesAtOnce()
+}
+
+// KeyboardTaker is a Surface whose window may not have taken the
+// keyboard as it was clicked: a panel that takes it only for a text input
+// (WindowOptions.KeyboardOnlyForText, macOS). Package ui calls
+// TakeKeyboard, on the main thread, after a press on a text input of its
+// content; it gives the window the keyboard, still without activating the
+// app, and does nothing where the window has it.
+type KeyboardTaker interface {
+	TakeKeyboard()
 }
 
 // MaximizeButtonSurface is a Surface whose window makes the maximize

@@ -457,8 +457,11 @@ type Renderer struct {
 	// under it). pre fetches the drawables of frames following each
 	// other, and pending is a frame waiting for its drawable (present.go).
 	synced, holes bool
-	pre           presenter
-	pending       pendingFrame
+	// withWindow tells that the window wants frames presented with its
+	// changes (SetWithWindow), withWindowWas that the last frame's did.
+	withWindow, withWindowWas bool
+	pre                       presenter
+	pending                   pendingFrame
 	// post runs a function on the main thread (SetPost), fetched has the
 	// presenter's thread draw pending through it, and wake is what Ready
 	// was given while a frame was pending.
@@ -709,6 +712,13 @@ func (r *Renderer) makePipelines(f *formatState) (err error) {
 	f.blurPipe, err = r.passPipeline(lib, "blur", f.format)
 	return err
 }
+
+// SetWithWindow has the frames drawn from now on present with Core
+// Animation's transaction, with the window's other changes, as those
+// showing web views do (a window's material moving with the content:
+// platform.WindowSyncedSurface); off, as soon as drawn but where they
+// need to.
+func (r *Renderer) SetWithWindow(on bool) { r.withWindow = on }
 
 // SetWide has the frames drawn from now on show the colors of scenes
 // outside the sRGB gamut (scene.Scene.Wide), into drawables of RGBA16Float
@@ -1786,7 +1796,10 @@ func (r *Renderer) render(s *scene.Scene) error {
 	// Others present as soon as the GPU has them, sparing a commit of the
 	// transaction for each.
 	holes := hasHoles(s)
-	sync := changed || holes || r.holes
+	// As with holes, the frame after the window stops wanting them
+	// presents with its changes too: its material hid as it was drawn.
+	sync := changed || holes || r.holes || r.withWindow || r.withWindowWas
+	r.withWindowWas = r.withWindow
 	if runtime.GOOS == "ios" {
 		// The frames draw on Go's thread, apart from UIKit's, which has
 		// no run loop to commit a transaction they would present with.

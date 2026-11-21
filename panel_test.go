@@ -2,7 +2,12 @@
 
 package mygo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/egoist/mygo/internal/platform"
+)
 
 // TestPanelOptions gives a panel's backend a window above others, out of
 // the taskbar, that cannot minimize, maximize or go full screen.
@@ -44,5 +49,95 @@ func TestPanelEscape(t *testing.T) {
 	escape()
 	if !w.IsDestroyed() {
 		t.Error("Escape did not close the panel")
+	}
+}
+
+// TestPanelKeyboard gives a panel's backend when it takes the keyboard:
+// on a text input alone (KeyboardOnlyForText), or never (not Focusable);
+// and a window that is no panel neither.
+func TestPanelKeyboard(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Panel: true, PanelKeyboard: PanelKeyboardForText})
+	if o := fw.Opts; !o.KeyboardOnlyForText || !o.Focusable {
+		t.Errorf("a panel for text: KeyboardOnlyForText %v, Focusable %v", o.KeyboardOnlyForText, o.Focusable)
+	}
+	_, fw = testWindow(t, WindowOptions{Panel: true, PanelKeyboard: PanelKeyboardNever})
+	if o := fw.Opts; o.KeyboardOnlyForText || o.Focusable || !o.Panel {
+		t.Errorf("a panel never focused: KeyboardOnlyForText %v, Focusable %v, Panel %v", o.KeyboardOnlyForText, o.Focusable, o.Panel)
+	}
+	for _, k := range []PanelKeyboard{PanelKeyboardForText, PanelKeyboardNever} {
+		_, fw = testWindow(t, WindowOptions{PanelKeyboard: k})
+		if o := fw.Opts; o.KeyboardOnlyForText || !o.Focusable {
+			t.Errorf("a window that is no panel took PanelKeyboard %d: %+v", k, o)
+		}
+	}
+}
+
+// TestPanelOverMenuBar passes OverMenuBar to the backend of a panel, and
+// of no other window.
+func TestPanelOverMenuBar(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Panel: true, OverMenuBar: true})
+	if !fw.Opts.OverMenuBar {
+		t.Error("a panel lost OverMenuBar")
+	}
+	_, fw = testWindow(t, WindowOptions{OverMenuBar: true})
+	if fw.Opts.OverMenuBar {
+		t.Error("a window that is no panel took OverMenuBar")
+	}
+}
+
+// TestSpaceInfo reads where the platform has a window among the Spaces,
+// and the zero SpaceInfo for a window that is gone.
+func TestSpaceInfo(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{Panel: true, OverMenuBar: true})
+	if s := w.SpaceInfo(); s.Known || s.String() != "unknown" {
+		t.Errorf("SpaceInfo before the platform told = %+v (%s)", s, s)
+	}
+	fw.Spaces = platform.SpaceInfo{Known: true, Number: 7, Visible: true, Behavior: 0x151, Level: 27, Sharing: 0, Style: 0x80, Rejoined: 2}
+	s := w.SpaceInfo()
+	if !s.Known || s.Number != 7 || !s.Visible || s.OnActiveSpace || s.Behavior != 0x151 || s.Level != 27 {
+		t.Errorf("SpaceInfo = %+v", s)
+	}
+	if want := "window 7 visible true onActiveSpace false occluded false behavior 0x151 level 27 sharing 0 style 0x80 rejoined 2"; s.String() != want {
+		t.Errorf("String = %q, want %q", s, want)
+	}
+	w.Destroy()
+	if s := w.SpaceInfo(); s.Known {
+		t.Errorf("SpaceInfo of a closed window = %+v", s)
+	}
+}
+
+// TestPanelGivesUpKey: a panel that took the keyboard gives it up — it
+// blurs, and the app's window takes it back — where Blur leaves it key
+// on macOS. A window without the keyboard gives nothing up.
+func TestPanelGivesUpKey(t *testing.T) {
+	main, fmain := testWindow(t, WindowOptions{Hidden: true})
+	panel, fpanel := testWindow(t, WindowOptions{Panel: true, Hidden: true})
+	onMain(fmain.ShowInactive)
+	fpanel.KeyHeir = fmain
+	var events []string
+	main.OnFocus(func() { events = append(events, "main focus") })
+	main.OnBlur(func() { events = append(events, "main blur") })
+	panel.OnFocus(func() { events = append(events, "panel focus") })
+	panel.OnBlur(func() { events = append(events, "panel blur") })
+
+	panel.Show()
+	onMain(fpanel.Focus)
+	if !panel.IsFocused() {
+		t.Fatal("the panel shown: not focused")
+	}
+	events = nil
+	panel.GiveUpKey()
+	onMain(func() {})
+	if panel.IsFocused() || !main.IsFocused() || FocusedWindow() != main {
+		t.Errorf("given up: panel focused %v, main %v, FocusedWindow %v", panel.IsFocused(), main.IsFocused(), FocusedWindow())
+	}
+	if got := strings.Join(events, ","); got != "panel blur,main focus" {
+		t.Errorf("events %q", got)
+	}
+	events = nil
+	panel.GiveUpKey() // not key: nothing
+	onMain(func() {})
+	if len(events) != 0 || !main.IsFocused() || fpanel.GaveUpKey != 2 {
+		t.Errorf("given up again: events %q, main focused %v, calls %d", events, main.IsFocused(), fpanel.GaveUpKey)
 	}
 }

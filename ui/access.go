@@ -1160,20 +1160,32 @@ func (e *node) describes() string {
 }
 
 // accessibilityOn starts describing frames for assistive technology,
-// with the last one at once.
+// with the last one at once, and builds another: a view may build more
+// for it (Context.AccessibilityActive). None built yet, or one waiting
+// for the window to show, builds out of sight too (the event is input),
+// so that assistive technology reads what the window shows now.
 func (rt *engine) accessibilityOn() {
 	if !rt.access {
 		rt.access = true
-		// None built yet, or one waiting for the window to show: the
-		// frame builds, out of sight too (the event is input), so that
-		// assistive technology reads what the window shows now.
-		if rt.c.root == nil || rt.held {
-			rt.requestFrame()
-		}
+		rt.requestFrame()
 	}
 	t := rt.accessTree()
 	rt.liveRegions(t, false) // what live regions show was there before
 	rt.host.updateAccessibility(rt.windowAccess(t))
+}
+
+// AccessibilityActive reports whether assistive technology reads the
+// window, from the first time it asked for what the window shows, as a
+// screen reader turned on does (Tester.AccessibilityOn in tests): a view
+// may then build what only it needs, as buttons that show only under the
+// pointer, which a screen reader's user never brings, for it to find and
+// press. Views must not look different for it.
+func (c *Context) AccessibilityActive() bool {
+	if c == nil {
+		return false
+	}
+	rt := c.runtime()
+	return rt != nil && rt.access
 }
 
 // accessAction performs an action of assistive technology on an element

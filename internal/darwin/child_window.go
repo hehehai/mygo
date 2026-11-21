@@ -52,6 +52,7 @@ func (w *window) onScreen() bool {
 // does not show. Then its own children go above it.
 func (w *window) showAboveParent(key bool) {
 	w.hiddenWithParent, w.hidMiniaturized = false, false
+	w.rejoinSpaces()
 	switch {
 	case w.isChild() && w.parent.onScreen():
 		w.b.orderingChildren = true
@@ -245,6 +246,9 @@ func (w *window) applyLevel() {
 	level := nsNormalWindowLevel
 	if w.onTop {
 		level = nsFloatingWindowLevel
+		if w.opts.Panel && w.opts.OverMenuBar {
+			level = nsOverMenuBarWindowLevel
+		}
 	}
 	if w.isChild() || w.modalToFlyout() && !w.parent.closed && w.parent.win != 0 {
 		level = max(level, sendInt(w.parent.win, "level"))
