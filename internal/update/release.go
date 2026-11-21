@@ -24,6 +24,13 @@ const (
 	ChannelBeta   = "beta"
 )
 
+// PrereleaseDir is the directory of the beta channel of a feed served from
+// a URL, beside its manifests: with updates.prereleases, `mygo build`
+// points the files of a prerelease into it and links its manifest into the
+// app beside the releases' one, which the updater reads too while the app
+// takes prereleases.
+const PrereleaseDir = "beta"
+
 // IsPrerelease reports whether a version such as 1.3.0-beta.1 is a
 // prerelease, which Compare orders before its release.
 func IsPrerelease(version string) bool {

@@ -198,8 +198,34 @@ func TestUpdatesConfig(t *testing.T) {
 	if _, err := load(`{"publicKey": "` + key + `", "url": "https://dl.example.com/my-app", "s3": {"bucket": "downloads", "prefix": "my-app", "endpoint": "https://acc.r2.cloudflarestorage.com"}}`); err != nil {
 		t.Error(err)
 	}
+	// With prereleases, a beta's files are in the beta channel's directory,
+	// a release's in url; the build links both channels' manifests in.
+	c, err = load(`{"publicKey": "` + key + `", "url": "https://dl.example.com/my-app", "prereleases": true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.updateFile("my-app-1.2.0-darwin-arm64.tar.gz", false); got != "https://dl.example.com/my-app/my-app-1.2.0-darwin-arm64.tar.gz" {
+		t.Errorf("release archive = %s", got)
+	}
+	if got := updateFlags(c, "darwin-arm64"); !strings.Contains(got, "packageUpdateFeed=https://dl.example.com/my-app/update-darwin-arm64.json") || !strings.Contains(got, "packageUpdateBetaFeed=https://dl.example.com/my-app/beta/update-darwin-arm64.json") {
+		t.Errorf("flags %s", got)
+	}
+	c.Version = "1.3.0-beta.1"
+	if got := c.updateFile("my-app-1.3.0-beta.1-darwin-arm64.tar.gz", false); got != "https://dl.example.com/my-app/beta/my-app-1.3.0-beta.1-darwin-arm64.tar.gz" {
+		t.Errorf("beta archive = %s", got)
+	}
+	if got := c.updateFeed("darwin-arm64"); got != "https://dl.example.com/my-app/update-darwin-arm64.json" {
+		t.Errorf("a beta's feed = %s, want the releases'", got)
+	}
+	// Without, a beta's files are where url says, as a feed of its own.
+	c, _ = load(`{"publicKey": "` + key + `", "url": "https://dl.example.com/my-app/beta"}`)
+	c.Version = "1.3.0-beta.1"
+	if got := updateFlags(c, "darwin-arm64"); strings.Contains(got, "BetaFeed") || c.updateFile("a.tar.gz", false) != "https://dl.example.com/my-app/beta/a.tar.gz" {
+		t.Errorf("a beta without prereleases: %s, %s", got, c.updateFile("a.tar.gz", false))
+	}
 	for _, bad := range []string{
 		`{"github": "me/my-app"}`,
+		`{"publicKey": "` + key + `", "github": "me/my-app", "prereleases": true}`,
 		`{"publicKey": "nope", "github": "me/my-app"}`,
 		`{"publicKey": "` + key + `"}`,
 		`{"publicKey": "` + key + `", "github": "me"}`,
@@ -541,6 +567,120 @@ func TestWriteDeltas(t *testing.T) {
 	}
 	if m, requests := build(0); m.Deltas != nil || m.Previous != nil || requests != nil {
 		t.Errorf("no deltas: %+v, requested %v", m, requests)
+	}
+}
+
+// TestWriteDeltasPrereleases makes delta updates from the newest version
+// of both channels of updates.prereleases, the releases' manifest and the
+// beta channel's (the newest of both), so that each channel's users get
+// one.
+func TestWriteDeltasPrereleases(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	t.Setenv("MYGO_UPDATER_PRIVATE_KEY", base64.StdEncoding.EncodeToString(priv))
+	code := make([]byte, 50_000)
+	for i := range code {
+		code[i] = byte(i * i >> 3)
+	}
+	app := func(dir, version string) []string {
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "app"), append(slices.Clone(code), version...), 0o755)
+		return []string{"app"}
+	}
+	const target = "linux-amd64"
+	// What the server serves, by path; the files go where updateFile says.
+	var mu sync.Mutex
+	files := map[string][]byte{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		b, ok := files[r.URL.Path]
+		mu.Unlock()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(b)
+	}))
+	defer srv.Close()
+	config := func(version string, prereleases bool, deltas *int) *Config {
+		return &Config{root: t.TempDir(), Name: "App", Version: version, Updates: &Updates{PublicKey: base64.StdEncoding.EncodeToString(pub), URL: srv.URL + "/app", Prereleases: prereleases, Deltas: deltas}}
+	}
+	build := func(c *Config) update.Manifest {
+		t.Helper()
+		stage := t.TempDir()
+		written, err := writeArchive(c, stage, target, app(stage, c.Version))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m update.Manifest
+		data, _ := os.ReadFile(written[len(written)-1])
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range m.Deltas {
+			if d.Release == "" || !strings.HasPrefix(d.URL, strings.TrimSuffix(m.URL, filepath.Base(m.URL))) {
+				t.Errorf("%s: delta %+v, archive at %s", c.Version, d, m.URL)
+			}
+		}
+		// Publish as the actnow site does: a beta in beta/; a release in
+		// the releases' directory, and in beta/ unless a newer beta is
+		// there.
+		mu.Lock()
+		defer mu.Unlock()
+		dir := "/app/"
+		if c.betaChannel() {
+			dir = "/app/beta/"
+		}
+		for _, f := range written {
+			b, _ := os.ReadFile(f)
+			files[dir+filepath.Base(f)] = b
+		}
+		manifest := "/app/beta/" + update.ManifestName(target)
+		if old, ok := files[manifest]; !c.betaChannel() && c.Updates.Prereleases {
+			var beta update.Manifest
+			if !ok || json.Unmarshal(old, &beta) == nil && update.Compare(beta.Version, c.Version) < 0 {
+				files[manifest] = data
+			}
+		}
+		return m
+	}
+	froms := func(m update.Manifest) []string {
+		var from []string
+		for _, d := range m.Deltas {
+			from = append(from, d.From)
+		}
+		return from
+	}
+	if m := build(config("0.1.0-beta.1", true, nil)); m.Deltas != nil || !strings.HasPrefix(m.URL, srv.URL+"/app/beta/") {
+		t.Errorf("the first version: deltas from %v, at %s", froms(m), m.URL)
+	}
+	if got := froms(build(config("0.1.0-beta.2", true, nil))); !slices.Equal(got, []string{"0.1.0-beta.1"}) {
+		t.Errorf("0.1.0-beta.2: deltas from %v, want 0.1.0-beta.1", got)
+	}
+	if m := build(config("0.1.0", true, nil)); !slices.Equal(froms(m), []string{"0.1.0-beta.2", "0.1.0-beta.1"}) || m.URL != srv.URL+"/app/app-0.1.0-linux-amd64.tar.gz" {
+		t.Errorf("0.1.0: deltas from %v, at %s", froms(m), m.URL)
+	}
+	// A beta of the next version updates the release and the last beta.
+	if got := froms(build(config("0.2.0-beta.1", true, nil))); !slices.Equal(got, []string{"0.1.0", "0.1.0-beta.2", "0.1.0-beta.1"}) {
+		t.Errorf("0.2.0-beta.1: deltas from %v", got)
+	}
+	// A fix of the release: the beta channel's newer beta is no base, and
+	// stays the beta channel's.
+	if got := froms(build(config("0.1.1", true, nil))); len(got) == 0 || got[0] != "0.1.0" || slices.Contains(got, "0.2.0-beta.1") {
+		t.Errorf("0.1.1: deltas from %v", got)
+	}
+	var beta update.Manifest
+	json.Unmarshal(files["/app/beta/"+update.ManifestName(target)], &beta)
+	if beta.Version != "0.2.0-beta.1" {
+		t.Errorf("the beta channel has %s, want 0.2.0-beta.1", beta.Version)
+	}
+	// Each channel's newest version comes first, whatever the count.
+	one := 1
+	if got := froms(build(config("0.2.0", true, &one))); !slices.Equal(got, []string{"0.2.0-beta.1"}) {
+		t.Errorf("0.2.0 with one delta: from %v", got)
+	}
+	// Without prereleases, only the releases' manifest is read.
+	if got := froms(build(config("0.3.0", false, nil))); len(got) == 0 || got[0] != "0.2.0" {
+		t.Errorf("without prereleases: deltas from %v", got)
 	}
 }
 

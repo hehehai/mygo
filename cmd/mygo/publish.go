@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/egoist/mygo/internal/update"
 )
 
 // checkUpload checks, before a build, that -upload has somewhere to upload
@@ -169,6 +171,12 @@ func mergeReleaseChecksums(gh, repo, tag string, files []string) error {
 // publishS3 uploads the artifacts of a build to the bucket of updates.s3,
 // which updates.url serves. Installed apps see the update of a platform
 // once its manifest is there.
+//
+// With updates.prereleases, a prerelease, such as 1.3.0-beta.1, goes in
+// the beta directory (update.PrereleaseDir), which only apps that take
+// prereleases read. A release also writes its manifests there, last,
+// unless a newer prerelease is published, so that the beta channel's
+// manifest names the newest version of both channels.
 func publishS3(c *Config, artifacts []string) error {
 	bucket, err := newS3Client(c.Updates.S3)
 	if err != nil {
@@ -181,15 +189,42 @@ func publishS3(c *Config, artifacts []string) error {
 	if err := mergeS3Checksums(c, files); err != nil {
 		return err
 	}
-	for _, f := range slices.Concat(files, manifests) {
+	dir, where := "", c.Updates.URL
+	if c.betaChannel() {
+		dir = update.PrereleaseDir + "/"
+		where = strings.TrimSuffix(where, "/") + "/" + update.PrereleaseDir
+	}
+	put := func(key, f string) error {
 		name := filepath.Base(f)
-		t := con.start("Uploading " + name)
+		t := con.start("Uploading " + key)
 		t.set(sizeOf(f))
-		if err := t.end(bucket.put(bucket.key(name), f, uploadHeader(name)), "Uploaded "+name); err != nil {
+		return t.end(bucket.put(bucket.key(key), f, uploadHeader(name)), "Uploaded "+key)
+	}
+	for _, f := range slices.Concat(files, manifests) {
+		if err := put(dir+filepath.Base(f), f); err != nil {
 			return err
 		}
 	}
-	logf("Uploaded to s3://%s/%s, which %s serves", bucket.bucket, bucket.prefix, c.Updates.URL)
+	logf("Uploaded to s3://%s/%s, which %s serves", bucket.bucket, bucket.key(dir), where)
+	if c.betaChannel() || c.betaFeed("") == "" {
+		return nil
+	}
+	for _, f := range manifests {
+		name := filepath.Base(f)
+		target := strings.TrimSuffix(strings.TrimPrefix(name, "update-"), ".json")
+		beta := c.betaFeed(target)
+		switch m, err := fetchManifest(beta); {
+		case err != nil && !errors.Is(err, errNotPublished):
+			warnf("Not writing %s of the beta channel: %v; apps that take prereleases still find %s in the releases' manifest", beta, err, c.Version)
+			continue
+		case err == nil && update.Compare(m.Version, c.Version) > 0:
+			logf("Left %s at the newer prerelease %s", beta, m.Version)
+			continue
+		}
+		if err := put(update.PrereleaseDir+"/"+name, f); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -203,7 +238,7 @@ func mergeS3Checksums(c *Config, files []string) error {
 	if i < 0 {
 		return nil
 	}
-	u := c.updateFile(checksumsName, true)
+	u := c.updateFile(checksumsName, !c.betaChannel()) // a prerelease's are in the beta directory
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return err

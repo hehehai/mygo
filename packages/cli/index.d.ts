@@ -193,6 +193,12 @@ export interface UpdatesConfig {
   changelog?: string;
   /** How many earlier versions get a delta update, a smaller download of what changed (default: `3`; `0` for none). */
   deltas?: number;
+  /**
+   * With `url`: a beta channel in the `beta/` directory of `url`. Versions such as `1.3.0-beta.1`
+   * point their files into it, the build links its manifest in beside the releases' one
+   * (`mygo.Updater.SetPrereleases`), and deltas come from the newest version of both channels.
+   */
+  prereleases?: boolean;
 }
 
 /**

@@ -110,6 +110,7 @@ Signed [auto-updates](updates.md). `publicKey` and one of `github` and
 | `privateKey` | | the path of `mygo-update.key`, for `mygo build`; the `MYGO_UPDATER_PRIVATE_KEY` environment variable, holding the key, takes precedence |
 | `changelog` | `CHANGELOG.md` when it exists | a Markdown file whose `## <version>` section becomes the release notes |
 | `deltas` | `3` | how many earlier versions get a [delta update](updates.md#delta-updates); `0` for none |
+| `prereleases` | `false` | with `url`: a [beta channel](updates.md#a-beta-channel-beside-url) in the `beta/` directory of `url`, where versions such as `1.3.0-beta.1` go; deltas come from the newest version of both channels |
 
 ## macos
 

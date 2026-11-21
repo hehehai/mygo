@@ -3,6 +3,7 @@
 package mygo
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -32,10 +33,12 @@ import (
 // Set by `mygo build` with -ldflags -X when mygo.config.ts configures updates:
 // the manifest of this build's target, or with a tag prefix on GitHub its
 // feed in the newest tagged release (update.TaggedFeed), and the public key
-// updates must be signed with.
+// updates must be signed with; with updates.prereleases, the manifest of the
+// beta channel too (update.PrereleaseDir).
 var (
-	packageUpdateFeed string
-	packageUpdateKey  string
+	packageUpdateFeed     string
+	packageUpdateKey      string
+	packageUpdateBetaFeed string
 )
 
 // startExe is the executable the app started from. On Linux, os.Executable
@@ -157,6 +160,9 @@ func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
 		return nil, ErrUpdatesDisabled
 	}
 	var src UpdateSource = feedSource(packageUpdateFeed)
+	if packageUpdateBetaFeed != "" {
+		src = channelFeeds{packageUpdateFeed, packageUpdateBetaFeed}
+	}
 	if s := updateSource.Load(); s != nil {
 		src = *s
 	}
@@ -167,12 +173,16 @@ func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
 // for the users of an app who chose its beta: with updates on GitHub,
 // Check then reads the release of the highest version that is not a
 // draft, through the GitHub API (usually one request a check), so that a
-// release newer than the prereleases is offered too. Check never offers a
-// version older than the running one, so turning it off waits for the
-// release after the prerelease the app runs. Updates of updates.url are
-// the manifest the server has, whichever is set. It is off at launch; the
-// app keeps the user's choice and sets it again. It may be called from
-// any goroutine.
+// release newer than the prereleases is offered too. With updates.url and
+// updates.prereleases, Check reads the manifest of the beta channel too,
+// in the beta directory of url, and offers the newer of the two; without
+// updates.prereleases, updates of updates.url are the manifest the server
+// has. Off, an app running a release is offered no prerelease, whatever
+// the feed says; an app running a prerelease takes the next prerelease and
+// the release after it. Check never offers a version older than the
+// running one, so turning it off waits for the release after the
+// prerelease the app runs. It is off at launch; the app keeps the user's
+// choice and sets it again. It may be called from any goroutine.
 func (u *UpdaterModule) SetPrereleases(on bool) { prereleases.Store(on) }
 
 // Prereleases reports whether Check offers prereleases (SetPrereleases).
@@ -196,6 +206,67 @@ func (f feedSource) Manifest(ctx context.Context, pre bool) (io.ReadCloser, erro
 
 func (f feedSource) Open(ctx context.Context, url string) (io.ReadCloser, error) {
 	return httpGet(ctx, url)
+}
+
+// channelFeeds are the feed of the releases and that of the beta channel
+// of a build with updates.url and updates.prereleases. With prereleases,
+// Manifest reads both and returns the newer; when one cannot be read, such
+// as a beta channel that has nothing yet (404), the other; when neither
+// can, the releases' error, or the beta channel's when the releases have
+// nothing published.
+type channelFeeds struct {
+	releases, beta string
+}
+
+func (f channelFeeds) Manifest(ctx context.Context, pre bool) (io.ReadCloser, error) {
+	if !pre {
+		return feedSource(f.releases).Manifest(ctx, false)
+	}
+	beta, berr := readManifest(ctx, f.beta)
+	if berr != nil && ctx.Err() != nil {
+		return nil, berr
+	}
+	rel, err := readManifest(ctx, f.releases)
+	newer := func(a, b []byte) bool {
+		var ma, mb struct {
+			Version string `json:"version"`
+		}
+		return json.Unmarshal(a, &ma) == nil && (json.Unmarshal(b, &mb) != nil || update.Compare(ma.Version, mb.Version) > 0)
+	}
+	switch {
+	case berr == nil && err == nil:
+		if newer(beta, rel) {
+			return io.NopCloser(bytes.NewReader(beta)), nil
+		}
+		return io.NopCloser(bytes.NewReader(rel)), nil
+	case berr == nil:
+		if !errors.Is(err, ErrNotPublished) {
+			log.Printf("mygo: checked the beta channel for updates, as the releases' manifest could not be read: %v", err)
+		}
+		return io.NopCloser(bytes.NewReader(beta)), nil
+	case err == nil:
+		if !errors.Is(berr, ErrNotPublished) {
+			log.Printf("mygo: checked the releases for updates, as the beta channel's manifest could not be read: %v", berr)
+		}
+		return io.NopCloser(bytes.NewReader(rel)), nil
+	case errors.Is(err, ErrNotPublished) && !errors.Is(berr, ErrNotPublished):
+		return nil, berr
+	}
+	return nil, err
+}
+
+func (f channelFeeds) Open(ctx context.Context, url string) (io.ReadCloser, error) {
+	return httpGet(ctx, url)
+}
+
+// readManifest reads the manifest at url, at most update.MaxManifestSize.
+func readManifest(ctx context.Context, url string) ([]byte, error) {
+	body, err := httpGet(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return io.ReadAll(io.LimitReader(body, update.MaxManifestSize))
 }
 
 func checkUpdate(ctx context.Context, src UpdateSource, key, current string, pre bool) (*Update, error) {

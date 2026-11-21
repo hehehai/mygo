@@ -460,6 +460,91 @@ func TestUpdaterPrereleases(t *testing.T) {
 	}
 }
 
+// TestUpdaterBetaChannel checks the releases' feed and, with prereleases,
+// the beta channel's of updates.prereleases too, offering the newer.
+func TestUpdaterBetaChannel(t *testing.T) {
+	ctx := context.Background()
+	key := base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	// The version of each channel's manifest, "" for none (404); a status
+	// other than 200 fails it.
+	var mu sync.Mutex
+	versions := map[string]string{}
+	status := map[string]int{}
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, r.URL.Path)
+		if s := status[r.URL.Path]; s != 0 && s != http.StatusOK {
+			http.Error(w, "down", s)
+			return
+		}
+		v := versions[r.URL.Path]
+		if v == "" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"version": %q, "url": "https://example.com/app-%s.tar.gz", "size": 1, "signature": "sig"}`, v, v)
+	}))
+	defer srv.Close()
+	defer func(r []time.Duration) { httpRetries = r }(httpRetries)
+	httpRetries = []time.Duration{time.Millisecond, time.Millisecond}
+	feeds := channelFeeds{srv.URL + "/app/update.json", srv.URL + "/app/beta/update.json"}
+	set := func(release, beta string, betaStatus int) {
+		mu.Lock()
+		versions["/app/update.json"], versions["/app/beta/update.json"] = release, beta
+		status["/app/beta/update.json"] = betaStatus
+		asked = nil
+		mu.Unlock()
+	}
+	for _, c := range []struct {
+		release, beta string
+		betaStatus    int
+		current       string
+		pre           bool
+		want          string // a version, "" for up to date, or "error: …"
+	}{
+		// A fix published after a beta of the next version.
+		{"1.2.1", "1.3.0-beta.2", 200, "1.2.0", false, "1.2.1"},
+		{"1.2.1", "1.3.0-beta.2", 200, "1.2.0", true, "1.3.0-beta.2"},
+		{"1.2.1", "1.3.0-beta.2", 200, "1.3.0-beta.1", true, "1.3.0-beta.2"},
+		{"1.2.1", "1.3.0-beta.2", 200, "1.3.0-beta.2", true, ""},
+		// Never back to 1.2.1.
+		{"1.2.1", "1.3.0-beta.2", 200, "1.3.0-beta.1", false, ""},
+		// The newer of the two, whichever channel's manifest names it.
+		{"1.3.0", "1.3.0-beta.2", 200, "1.3.0-beta.1", true, "1.3.0"},
+		{"1.3.0", "1.3.0", 200, "1.3.0-beta.2", false, "1.3.0"},
+		// The beta channel down or empty: the releases'.
+		{"1.3.0", "", 200, "1.2.0", true, "1.3.0"},
+		{"1.3.0", "1.3.0", 502, "1.2.0", true, "1.3.0"},
+		// Only betas yet: the releases' feed has nothing published, which
+		// is up to date without prereleases.
+		{"", "0.1.0-beta.2", 200, "0.1.0-beta.1", true, "0.1.0-beta.2"},
+		{"", "0.1.0-beta.2", 200, "0.1.0-beta.1", false, ""},
+		{"", "", 200, "0.1.0-beta.1", true, ""},
+		// Nothing published and the beta channel down: its error.
+		{"", "", 502, "0.1.0-beta.1", true, "error: 502"},
+	} {
+		set(c.release, c.beta, c.betaStatus)
+		up, err := checkUpdate(ctx, feeds, key, c.current, c.pre)
+		got := ""
+		switch {
+		case err != nil:
+			got = "error: " + err.Error()
+		case up != nil:
+			got = up.Version
+		}
+		if got != c.want && !(strings.HasPrefix(c.want, "error: ") && strings.HasPrefix(got, "error: ") && strings.Contains(got, strings.TrimPrefix(c.want, "error: "))) {
+			t.Errorf("releases %q, beta %q (%d), from %s, prereleases %t: %s, want %s", c.release, c.beta, c.betaStatus, c.current, c.pre, got, c.want)
+		}
+		mu.Lock()
+		if !c.pre && slices.ContainsFunc(asked, func(p string) bool { return strings.Contains(p, "/beta/") }) {
+			t.Errorf("read the beta channel without prereleases: %v", asked)
+		}
+		mu.Unlock()
+	}
+}
+
 // errSource fails with err.
 type errSource struct{ err error }
 
