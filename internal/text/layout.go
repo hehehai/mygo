@@ -3,7 +3,9 @@ package text
 import (
 	"cmp"
 	"encoding/binary"
+	"errors"
 	"image"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -580,6 +582,9 @@ var appFonts struct {
 type appFontData struct {
 	data   []byte
 	family string
+	// axes is the point of a variable font's axes registered
+	// (RegisterAppFontVariation), nil for its default instance.
+	axes map[string]float64
 }
 
 // RegisterAppFont registers a font in Shared, as its RegisterFont does,
@@ -591,7 +596,19 @@ func RegisterAppFont(data []byte, family string) error {
 		return err
 	}
 	appFonts.mu.Lock()
-	appFonts.fonts = append(appFonts.fonts, appFontData{data, family})
+	appFonts.fonts = append(appFonts.fonts, appFontData{data, family, nil})
+	appFonts.mu.Unlock()
+	return nil
+}
+
+// RegisterAppFontVariation registers a variable font at a point of its
+// axes in Shared and in every System New makes, as RegisterAppFont does.
+func RegisterAppFontVariation(data []byte, family string, axes map[string]float64) error {
+	if err := Shared().RegisterFontVariation(data, family, axes); err != nil {
+		return err
+	}
+	appFonts.mu.Lock()
+	appFonts.fonts = append(appFonts.fonts, appFontData{data, family, maps.Clone(axes)})
 	appFonts.mu.Unlock()
 	return nil
 }
@@ -611,7 +628,7 @@ func (s *System) takeAppFonts() {
 	}
 	for _, f := range fonts {
 		// Shared's engine read it already.
-		_ = s.engine().register(f.data, f.family)
+		_ = s.registerFont(f.data, f.family, f.axes)
 	}
 	s.fontsChanged()
 }
@@ -789,6 +806,32 @@ func (s *System) RegisterFont(data []byte, family string) error {
 	}
 	s.fontsChanged()
 	return nil
+}
+
+// RegisterFontVariation adds a variable font at a point of its axes
+// (OpenType tags, as "wght" 700 or "wdth" 75) as family alone: a named
+// instance of it, or any other. Engines without variable fonts (all but
+// Core Text) register it as RegisterFont does: its default instance.
+func (s *System) RegisterFontVariation(data []byte, family string, axes map[string]float64) error {
+	if family == "" {
+		return errors.New("mygo: a font variation needs a family of its own")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.registerFont(data, family, axes); err != nil {
+		return err
+	}
+	s.fontsChanged()
+	return nil
+}
+
+// registerFont has the engine register a font, at the axes' point when
+// given and the engine has variable fonts. s.mu is held.
+func (s *System) registerFont(data []byte, family string, axes map[string]float64) error {
+	if v, ok := s.engine().(variations); ok && len(axes) > 0 {
+		return v.registerVariation(data, family, axes)
+	}
+	return s.engine().register(data, family)
 }
 
 // fontsChanged forgets what the fonts registered so far made. s.mu is

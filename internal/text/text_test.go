@@ -1318,6 +1318,25 @@ func TestRegisterFont(t *testing.T) {
 	}
 }
 
+// TestRegisterFontVariationStatic: a static font (or an engine without
+// variable fonts) registers as RegisterFont would; a variation needs a
+// family of its own.
+func TestRegisterFontVariationStatic(t *testing.T) {
+	s := newSystem()
+	if err := s.RegisterFontVariation(goregular.TTF, "MyGo Test Variation", map[string]float64{"wght": 700}); err != nil {
+		t.Fatal(err)
+	}
+	font := func(family string) *Font {
+		return s.Layout(Params{Text: "Hello", Style: Style{Size: 20, Family: family}}).Lines[0].Glyphs[0].Font
+	}
+	if font("MyGo Test Variation") == font("") {
+		t.Error("text does not use the registered font")
+	}
+	if err := s.RegisterFontVariation(goregular.TTF, "", nil); err == nil {
+		t.Error("no family")
+	}
+}
+
 // An app's fonts (RegisterAppFont) reach Shared and every System New
 // makes, as a Tester's window has: one made before them takes them at its
 // next layout, one made after before its first. Go Mono is monospaced, so

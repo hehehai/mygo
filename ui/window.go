@@ -43,6 +43,18 @@ func RegisterFont(data []byte, family string) error {
 	return text.RegisterAppFont(data, family)
 }
 
+// RegisterFontVariation adds a variable font (TrueType or OpenType with
+// fvar) at a point of its axes — OpenType tags and values, as "wght" 700
+// or "wdth" 75: a named instance of it, or any other — as family, which
+// it must name and which then draws that instance alone, apart from the
+// font's own family. On macOS (Core Text); elsewhere it registers the
+// default instance, as RegisterFont. A font viewer registers each
+// instance it shows under a family of its own. A Tester's window draws
+// them too.
+func RegisterFontVariation(data []byte, family string, axes map[string]float64) error {
+	return text.RegisterAppFontVariation(data, family, axes)
+}
+
 // A FontFamily is a font family text can use, as FontFamilies lists it.
 type FontFamily struct {
 	// Name is the family as Font and Theme take it.
