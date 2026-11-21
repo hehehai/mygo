@@ -127,6 +127,7 @@ var (
 	msgSetRect        func(obj id, sel objc.SEL, r cgRect)
 	msgRect           func(obj id, sel objc.SEL) cgRect
 	msgSetFloat       func(obj id, sel objc.SEL, v float64)
+	msgFloat          func(obj id, sel objc.SEL) float64
 	selMu             sync.Mutex
 	selectors         = map[string]objc.SEL{}
 	renderPass        id // MTLRenderPassDescriptor
@@ -228,6 +229,7 @@ func load() error {
 		purego.RegisterFunc(&msgSetSize, msgSend)
 		purego.RegisterFunc(&msgSetRect, msgSend)
 		purego.RegisterFunc(&msgSetFloat, msgSend)
+		purego.RegisterFunc(&msgFloat, msgSend)
 		purego.RegisterFunc(&msgRect, stret)
 		renderPass = class("MTLRenderPassDescriptor")
 		selSetPipeline = sel("setRenderPipelineState:")
@@ -479,6 +481,8 @@ type Renderer struct {
 	video  videoState
 	// img bounds the images' textures (budget.go).
 	img budgetState
+	// tm is what MYGO_METAL_TIMING measures of a frame (timing.go).
+	tm timingState
 	// canvases are the textures canvases are drawn into.
 	canvases map[uint64]*canvasTexture
 	// blurred are the textures of the images the frame draws blurred
@@ -1160,7 +1164,7 @@ func (r *Renderer) waitSlot(slot int) {
 	if cb == 0 {
 		return
 	}
-	send(cb, "waitUntilCompleted")
+	r.waitTimed(cb, slot)
 	if int(send(cb, "status")) == statusError && r.err == nil {
 		e := send(cb, "error")
 		r.err = fmt.Errorf("metal: a frame failed: %s", describe(e))
@@ -1186,6 +1190,7 @@ func (r *Renderer) waitLast() {
 // encode used, and moves on to the next.
 func (r *Renderer) track(cb id) {
 	r.inflight[r.inUse] = send(cb, "retain")
+	r.tm.slotFrame[r.inUse] = r.frame
 	r.slot = (r.inUse + 1) % ringSize
 }
 
@@ -1839,10 +1844,14 @@ func (r *Renderer) render(s *scene.Scene) error {
 		r.redrew = redrewNothing
 		return nil
 	}
+	start := time.Now()
+	r.beginTiming()
 	if !sync && r.fetched != nil && !r.pre.ready(r.fetched) {
 		// The next drawable is being fetched: the frame is built now and
 		// drawn into it once the presenter has it.
-		return r.stash(s, damage, known)
+		err := r.stash(s, damage, known)
+		r.logFrame(start, true, sync)
+		return err
 	}
 	var drawable id
 	cb, err := r.drawFrame(s, damage, known, func() id {
@@ -1855,10 +1864,10 @@ func (r *Renderer) render(s *scene.Scene) error {
 			r.synced = sync
 		}
 		if !sync {
-			drawable = r.prefetched()
+			drawable = r.timeDrawable(r.prefetched)
 		}
 		if drawable == 0 {
-			drawable = send(r.layer, "nextDrawable")
+			drawable = r.timeDrawable(func() id { return send(r.layer, "nextDrawable") })
 		}
 		if drawable == 0 {
 			return 0
@@ -1868,6 +1877,7 @@ func (r *Renderer) render(s *scene.Scene) error {
 	if err != nil {
 		return err
 	}
+	r.logFrame(start, false, sync)
 	if drawable == 0 {
 		// None came within a second: the frame is skipped, its canvases
 		// drawn.

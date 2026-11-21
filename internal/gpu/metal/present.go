@@ -225,10 +225,12 @@ func (r *Renderer) finishPending(prefetch bool) error {
 	p := r.pending
 	r.pending = pendingFrame{}
 	defer r.wakeContent()
+	t0 := time.Now()
 	drawable := r.prefetched()
 	if drawable == 0 {
 		drawable = send(r.layer, "nextDrawable")
 	}
+	r.logPending(time.Since(t0))
 	if drawable == 0 {
 		// None came within a second: the frame is skipped, what it drew
 		// before its drawable committed.

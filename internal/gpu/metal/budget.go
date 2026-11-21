@@ -185,18 +185,3 @@ func (r *Renderer) releaseIdle() {
 	r.img.budget.Reset()
 	r.img.budget.Add(bytes)
 }
-
-// imageBytes is the bytes of a w×h texture of RGBA8.
-func imageBytes(w, h int) int64 { return int64(w) * int64(h) * 4 }
-
-// upload makes the texture of an image's pixels, counting it.
-func (r *Renderer) upload(w, h int, pix []byte) (tex id) {
-	r.timeUpload(len(pix), func() { tex = r.newTexture(w, h, pixelFormatRGBA8Unorm, usageShaderRead, pix, w*4) })
-	return tex
-}
-
-// timeUpload runs fn, an upload of n bytes, counting it.
-func (r *Renderer) timeUpload(n int, fn func()) {
-	r.img.uploads++
-	fn()
-}
