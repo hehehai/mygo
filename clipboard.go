@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/sysguard"
 	"github.com/egoist/mygo/transfer"
 )
 
@@ -139,6 +140,9 @@ func (ClipboardModule) Write(data transfer.Data, options ...ClipboardOptions) er
 	needsApp("Clipboard.Write")
 	if len(options) > 1 {
 		panic("mygo: Clipboard.Write accepts at most one options value")
+	}
+	if !sysguard.Allows(GuardClipboard, "") {
+		return ErrGuarded
 	}
 	if slices.Contains(data.Formats(), platform.DragSessionFormat) {
 		return errors.New("mygo: clipboard cannot contain a process-local drag session")

@@ -19,6 +19,7 @@ import (
 
 	"github.com/egoist/mygo/internal/accelerator"
 	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/sysguard"
 	"github.com/egoist/mygo/transfer"
 )
 
@@ -34,18 +35,27 @@ var Shell ShellModule
 // in the default browser.
 func (ShellModule) OpenExternal(url string) error {
 	needsApp("Shell.OpenExternal")
+	if !sysguard.Allows(GuardOpenURL, url) {
+		return ErrGuarded
+	}
 	return onMainValue(func() error { return backend().Shell().OpenExternal(url) })
 }
 
 // OpenPath opens a file or directory with the default application.
 func (ShellModule) OpenPath(path string) error {
 	needsApp("Shell.OpenPath")
+	if !sysguard.Allows(GuardOpenPath, path) {
+		return ErrGuarded
+	}
 	return onMainValue(func() error { return backend().Shell().OpenPath(path) })
 }
 
 // ShowItemInFolder reveals a file in the file manager.
 func (ShellModule) ShowItemInFolder(path string) {
 	needsApp("Shell.ShowItemInFolder")
+	if !sysguard.Allows(GuardShowItem, path) {
+		return
+	}
 	onMain(func() { backend().Shell().ShowItemInFolder(path) })
 }
 
@@ -61,6 +71,9 @@ func (ShellModule) TrashItem(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
+	}
+	if !sysguard.Allows(GuardTrash, abs) {
+		return ErrGuarded
 	}
 	return onMainValue(func() error { return backend().Shell().TrashItem(abs) })
 }
@@ -83,6 +96,9 @@ func (ShellModule) TrashItemResult(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
+	}
+	if !sysguard.Allows(GuardTrash, abs) {
+		return "", ErrGuarded
 	}
 	var trashPath string
 	err = onMainValue(func() error {
@@ -198,6 +214,9 @@ func (ShellModule) LaunchApp(app InstalledApp) error {
 	if app.Path == "" {
 		return errors.New("mygo: Shell.LaunchApp: the app has no path")
 	}
+	if !sysguard.Allows(GuardLaunchApp, app.Path) {
+		return ErrGuarded
+	}
 	return onMainValue(func() error { return backend().Shell().OpenApplication(app.Path) })
 }
 
@@ -271,6 +290,9 @@ func (c ClipboardModule) WriteImage(data []byte) error {
 // Clear empties the clipboard.
 func (ClipboardModule) Clear() {
 	needsApp("Clipboard.Clear")
+	if !sysguard.Allows(GuardClipboard, "") {
+		return
+	}
 	onMain(func() {
 		if !clipboardProviding && !clipboardStopped {
 			withClipboardOperation(func() { backend().Clipboard().Clear() })
@@ -1335,6 +1357,9 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 	needsApp("Notification.Show")
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if !sysguard.Allows(GuardNotification, n.id) {
+		return ErrGuarded
 	}
 	notifications.Lock()
 	if notifications.byID == nil {

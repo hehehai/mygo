@@ -334,6 +334,19 @@ goroutine, and returns in tens of milliseconds. Drawing icons takes a few
 milliseconds each, on the main thread: draw those that show, and keep
 them.
 
+### A guard for scripted checks
+
+`mygo.SetSystemGuard(fn)` has `fn` asked before MyGo changes anything
+outside the app: opening a URL (`Shell.OpenExternal`, a link in native UI),
+a file (`OpenPath`) or an app (`LaunchApp`), revealing (`ShowItemInFolder`)
+or trashing a file (`TrashItem`, `TrashItemResult`), showing a notification,
+and writing or clearing the clipboard (`Clipboard`'s writes, a text input's
+Copy and Cut). `fn` gets the action (`mygo.GuardOpenURL`…) and its target;
+false skips it, and calls that return an error return `mygo.ErrGuarded`.
+Checks that run the real app on a developer's Mac set it so the user's
+other apps, notifications and clipboard stay out of their way; nil, the
+default, allows everything.
+
 ## Displays
 
 `mygo.Screen` describes the connected displays, in device-independent
