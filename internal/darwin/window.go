@@ -2136,7 +2136,16 @@ func (w *window) CapturePage(cb func([]byte, error)) {
 				cb(nil, nsError(err))
 				return
 			}
-			withPool(func() { cb(pngFromImage(img), nil) })
+			// Encoded off the main thread: a window's worth at scale 2
+			// took the main thread 30 ms (TIFF, then PNG), the page's
+			// frames dropped while it did. The image is WebKit's,
+			// immutable: read on another thread, retained until then.
+			retain(img)
+			go withPool(func() {
+				png := pngFromImage(img)
+				release(img)
+				cb(png, nil)
+			})
 		})
 		defer blk.Release()
 		send(w.web, "takeSnapshotWithConfiguration:completionHandler:", 0, uintptr(blk))

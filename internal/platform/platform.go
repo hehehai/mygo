@@ -773,7 +773,8 @@ type Page interface {
 	OpenDevTools()
 	CloseDevTools()
 	IsDevToolsOpened() bool
-	// CapturePage takes a PNG snapshot of the visible page.
+	// CapturePage takes a PNG snapshot of the visible page; cb may run
+	// on any thread.
 	CapturePage(cb func(png []byte, err error))
 	// PrintToPDF renders the page as a PDF document.
 	PrintToPDF(opts PDFOptions, cb func(pdf []byte, err error))
