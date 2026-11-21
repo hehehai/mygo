@@ -190,8 +190,10 @@ type view struct {
 	coalesce bool
 	// The pointer: a drag selecting by runes, words or paragraphs, from
 	// where it started; a scroll bar's thumb held; a link pressed.
-	dragging   bool
-	dragUnit   int
+	dragging bool
+	dragUnit int
+	// resize is the drag of a picture's corner, nil when none.
+	resize     *imageResize
 	dragStart  [2]int
 	pressMods  ui.Modifiers
 	pressLink  string

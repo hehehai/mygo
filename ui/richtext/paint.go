@@ -76,6 +76,9 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 			}
 		}
 	}
+	if focused && !v.opts.ReadOnly {
+		v.paintHandles(p, ox, oy, v.scroll)
+	}
 	if focused && !v.opts.ReadOnly && a == z {
 		const blink = 530 * time.Millisecond
 		if phase := p.Now().Sub(v.blinkStart); (phase/blink)%2 == 0 || phase < 0 {
@@ -296,6 +299,10 @@ func (v *view) paintAttachments(p *ui.Painter, i int, pv *paraView, x, y float32
 		}
 		at := v.shown.AttributesAt(v.global(i, l)).Attachment
 		r := ui.Rect{X: x + o.Rect.X, Y: y + o.Rect.Y, W: o.Rect.W, H: o.Rect.H}
+		g := v.global(i, l)
+		if v.resize != nil && v.resize.i == g {
+			r.W, r.H = v.resize.w, v.resize.h
+		}
 		switch {
 		case at == nil:
 		case at.Draw != nil:
