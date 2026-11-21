@@ -108,6 +108,9 @@ type Backend struct {
 	URLSchemes map[string]string
 	// LoginItem is the command that starts the app at login: "id name arg".
 	LoginItem string
+	// LaunchedToOpen is what App.WasLaunchedToOpen reports;
+	// LaunchedInBackground is platform.BackgroundLaunch's.
+	LaunchedToOpen, LaunchedInBackground bool
 	// DockMenu is the menu of the Dock icon.
 	DockMenu *platform.Menu
 	// Active is what App.IsActive answers; SetActive changes it.
@@ -1121,6 +1124,17 @@ func (a app) OpenAtLogin(id, name, arg string) bool {
 }
 
 func (app) OpenedAtLogin() bool { return false }
+
+// LaunchedInBackground is platform.BackgroundLaunch's:
+// Backend.LaunchedInBackground.
+func (a app) LaunchedInBackground() bool {
+	a.b.mu.Lock()
+	defer a.b.mu.Unlock()
+	return a.b.LaunchedInBackground
+}
+
+// LaunchedToOpen is platform.LaunchReader's: Backend.LaunchedToOpen.
+func (a app) LaunchedToOpen() bool { a.b.mu.Lock(); defer a.b.mu.Unlock(); return a.b.LaunchedToOpen }
 
 func (a app) SetDockMenu(m *platform.Menu) { a.b.mu.Lock(); a.b.DockMenu = m; a.b.mu.Unlock() }
 

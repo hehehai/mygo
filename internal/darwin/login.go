@@ -95,6 +95,46 @@ func (a appController) OpenAtLogin(appID, name, arg string) bool {
 // started as a login item, recorded in applicationWillFinishLaunching:.
 func (a appController) OpenedAtLogin() bool { return a.b.openedAtLogin }
 
+// LaunchedToOpen reports whether the app was started to open URLs or
+// files (platform.LaunchReader), as applicationDidFinishLaunching: found:
+// they came before it, or the launch was not the default one and not for
+// the app alone.
+func (a appController) LaunchedToOpen() bool { return a.b.launchedToOpen }
+
+// launchIsDefault reads NSApplicationLaunchIsDefaultLaunchKey from
+// applicationDidFinishLaunching:'s notification (missing: default). It
+// is NO for a launch to open URLs or files, but also for one with saved
+// windows to restore — an app with restorable windows that quit without
+// AppKit's terminate (MyGo's quit) has some at every launch.
+func launchIsDefault(n id) bool {
+	info := send(n, "userInfo")
+	if info == 0 {
+		return true
+	}
+	v := send(info, "objectForKey:", uintptr(nsString("NSApplicationLaunchIsDefaultLaunchKey")))
+	return v == 0 || sendBool(v, "boolValue")
+}
+
+// launchEventOpensApp reports whether the Apple Event being handled is
+// the open ('oapp') or reopen ('rapp') of the app alone: the launch's own
+// in applicationDidFinishLaunching: (the Dock, Finder, open -a, a login
+// item). A launch for URLs or files handles theirs ('GURL', 'odoc')
+// before it and none is current then.
+func launchEventOpensApp() bool {
+	ev := send(send(class("NSAppleEventManager"), "sharedAppleEventManager"), "currentAppleEvent")
+	if ev == 0 {
+		return false
+	}
+	return isAppLaunchEvent(uint32(send(ev, "eventClass")), uint32(send(ev, "eventID")))
+}
+
+// isAppLaunchEvent: kCoreEventClass with kAEOpenApplication or
+// kAEReopenApplication.
+func isAppLaunchEvent(class, id uint32) bool {
+	const kAEOpenApplication, kAEReopenApplication = 0x6F617070, 0x72617070 // 'oapp', 'rapp'
+	return class == kCoreEventClass && (id == kAEOpenApplication || id == kAEReopenApplication)
+}
+
 // launchedAsLoginItem reports whether the Apple Event being handled, the
 // one that launched the app, marks it as started at login.
 func launchedAsLoginItem() bool {

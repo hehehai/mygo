@@ -674,3 +674,40 @@ func TestBackgroundShowsWindowsInactive(t *testing.T) {
 		}
 	}
 }
+
+// TestLaunchedInBackground: an app the system started and left in the
+// background shows the windows of its first moments without the focus
+// (open -g on macOS), and a window shown after launchQuiet with it, as the
+// user asked for it then.
+func TestLaunchedInBackground(t *testing.T) {
+	quiet := launchQuiet
+	launchQuiet = 50 * time.Millisecond
+	fb.LaunchedInBackground = true
+	t.Cleanup(func() {
+		launchQuiet = quiet
+		fb.LaunchedInBackground = false
+		onMain(func() { backgroundShow = false })
+	})
+	last := func() *fake.Window { wins := fb.Windows(); return wins[len(wins)-1] }
+	show := func(title string) *fake.Window {
+		var fw *fake.Window
+		onMain(func() {
+			w := NewWindow(WindowOptions{Title: title, Hidden: true})
+			t.Cleanup(w.Destroy)
+			fw = last()
+			w.Show()
+		})
+		return fw
+	}
+	onMain(App.keepBehind)
+	if fw := show("First"); !fw.IsVisible() || fw.IsFocused() {
+		t.Errorf("first window: visible %v, focused %v; want shown without the focus", fw.IsVisible(), fw.IsFocused())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for onMainValue(func() bool { return backgroundShow }) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if fw := show("Later"); !fw.IsVisible() || !fw.IsFocused() {
+		t.Errorf("a window shown later: visible %v, focused %v; want shown focused", fw.IsVisible(), fw.IsFocused())
+	}
+}

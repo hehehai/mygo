@@ -2934,3 +2934,15 @@ func TestPointerRefresh(t *testing.T) {
 		t.Errorf("reports = %+v, want %+v", got, wantAll)
 	}
 }
+
+// TestWasLaunchedToOpen reports what the backend found of the launch.
+func TestWasLaunchedToOpen(t *testing.T) {
+	if App.WasLaunchedToOpen() {
+		t.Error("a default launch taken for one to open something")
+	}
+	fb.LaunchedToOpen = true
+	defer func() { fb.LaunchedToOpen = false }()
+	if !App.WasLaunchedToOpen() {
+		t.Error("a launch to open something not told")
+	}
+}

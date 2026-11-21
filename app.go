@@ -354,6 +354,7 @@ func (a *Application) lastWindowClosed() {
 }
 
 func (a *Application) handleReady() {
+	a.keepBehind()
 	a.mu.Lock()
 	menuSet := a.menuSet
 	a.mu.Unlock()

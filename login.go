@@ -3,6 +3,8 @@ package mygo
 import (
 	"os"
 	"slices"
+
+	"github.com/egoist/mygo/internal/platform"
 )
 
 // loginArg is passed by the command that starts the app at login (Linux,
@@ -56,6 +58,21 @@ func (a *Application) OpenAtLogin() bool {
 //	mygo.NewWindow(mygo.WindowOptions{URL: "/", Hidden: mygo.App.WasOpenedAtLogin()})
 func (a *Application) WasOpenedAtLogin() bool {
 	return openedAtLogin || onMainValue(func() bool { return backend().App().OpenedAtLogin() })
+}
+
+// WasLaunchedToOpen reports whether the system started the app to open
+// URLs or files (macOS: they came while it launched, or the launch was
+// neither the default one nor the open of the app alone, as the Dock's,
+// Finder's or a restore of saved windows is), which reach OnOpenURL and
+// OnOpenFile around the end of the launch: e.g. to wait for them before
+// showing a window, for an app a link should leave in the background (a
+// browser extension waking it). Ask from WhenReady on. False elsewhere,
+// where they come as arguments.
+func (a *Application) WasLaunchedToOpen() bool {
+	return onMainValue(func() bool {
+		r, ok := backend().App().(platform.LaunchReader)
+		return ok && r.LaunchedToOpen()
+	})
 }
 
 // appID identifies the app to the system: its identifier, else its name.

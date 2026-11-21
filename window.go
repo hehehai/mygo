@@ -1078,6 +1078,28 @@ func (w *Window) showInactive() {
 // app becomes the active one. Main thread only.
 var backgroundShow = devBackground
 
+// launchQuiet is how long after a launch the system left in the
+// background the windows the app shows keep it there (keepBehind): those
+// it opens as it starts; one shown later, which the user asked for,
+// brings it to the front.
+var launchQuiet = 5 * time.Second
+
+// keepBehind shows the windows of the app's first launchQuiet without the
+// focus (backgroundShow) when the system started it and left it in the
+// background (platform.BackgroundLaunch: open -g on macOS), until one of
+// them takes the focus or the app becomes the active one, as for `mygo
+// dev -background`. Main thread only.
+func (a *Application) keepBehind() {
+	b, ok := backend().App().(platform.BackgroundLaunch)
+	if !ok || !b.LaunchedInBackground() || backgroundShow {
+		return
+	}
+	backgroundShow = true
+	time.AfterFunc(launchQuiet, func() {
+		postMain(func() { backgroundShow = backgroundShow && devBackground })
+	})
+}
+
 // fitShow sizes a hidden flyout of native UI that takes its content's
 // size to that content before it shows (fitContent.show). Main thread
 // only.

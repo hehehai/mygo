@@ -251,6 +251,22 @@ type AppHandler interface {
 	MemoryWarning()
 }
 
+// LaunchReader is an AppController that tells whether the system started
+// the app to open URLs or files (macOS: not its default launch, or URLs
+// and files came while it launched); they come once it finished
+// launching. mygo.App.WasLaunchedToOpen.
+type LaunchReader interface {
+	LaunchedToOpen() bool
+}
+
+// BackgroundLaunch is an AppController that tells whether the system
+// started the app and left it in the background (macOS: open -g, a launch
+// told not to switch to it). The core then shows the windows of its first
+// moments without the focus, as `mygo dev -background` does.
+type BackgroundLaunch interface {
+	LaunchedInBackground() bool
+}
+
 // AppController exposes application level native features.
 type AppController interface {
 	SetActivationPolicy(policy string)
