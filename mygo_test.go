@@ -2849,3 +2849,88 @@ func TestSingleInstance(t *testing.T) {
 		t.Fatal("OnOpenURL not called for the forwarded URL")
 	}
 }
+
+// TestWatchPointer reports going into and out of regions and dragging,
+// once each.
+func TestWatchPointer(t *testing.T) {
+	var got []PointerWatch
+	w, err := Screen.WatchPointer(func(p PointerWatch) { got = append(got, p) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+	w.SetRegions(Rectangle{X: 630, Width: 180, Height: 25}, Rectangle{X: 0, Y: 0, Width: 1440, Height: 200})
+	move := func(x, y int, drag bool) { onMain(func() { fb.MovePointer(platform.Point{X: x, Y: y}, drag) }) }
+	move(700, 10, false)  // the first region
+	move(701, 11, false)  // still: nothing
+	move(700, 100, false) // the second
+	move(700, 100, true)  // dragging there
+	move(700, 500, true)  // out
+	w.Stop()
+	move(700, 10, false) // stopped: nothing
+	want := []PointerWatch{
+		{Region: 0, Point: Point{700, 10}},
+		{Region: 1, Point: Point{700, 100}},
+		{Region: 1, Point: Point{700, 100}, Dragging: true},
+		{Region: -1, Point: Point{700, 500}, Dragging: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("reports = %+v, want %+v", got, want)
+	}
+}
+
+// TestPointerRefresh: Refresh reports where the pointer is in the regions
+// as they are now (SetRegions does not look), once; it ends a drag the
+// backend believes in with the primary button up; it does nothing once
+// the watcher is stopped.
+func TestPointerRefresh(t *testing.T) {
+	var got []PointerWatch
+	w, err := Screen.WatchPointer(func(p PointerWatch) { got = append(got, p) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+	defer fb.SetPointerNow(platform.PointerNow{})
+	move := func(x, y int, drag bool) { onMain(func() { fb.MovePointer(platform.Point{X: x, Y: y}, drag) }) }
+	move(700, 10, false) // no regions yet: nothing
+	w.SetRegions(Rectangle{}, Rectangle{X: 630, Width: 180, Height: 25})
+	fb.SetPointerNow(platform.PointerNow{Point: platform.Point{X: 700, Y: 10}})
+	c := w.Refresh()
+	want := PointerWatch{Region: 1, Point: Point{700, 10}}
+	if !c.Read || !c.Reported || c.Before.Region != -1 || c.Now != want || c.Watchers == 0 || c.Missed {
+		t.Errorf("first Refresh = %+v (the pointer at rest, the regions new)", c)
+	}
+	if c = w.Refresh(); c.Reported || c.Before != want {
+		t.Errorf("second Refresh = %+v: nothing new", c)
+	}
+	// Moves the backend did not tell of.
+	fb.SetPointerNow(platform.PointerNow{Point: platform.Point{X: 702, Y: 12}})
+	if c = w.Refresh(); !c.Missed || c.Seen != (Point{700, 10}) || c.Reported {
+		t.Errorf("missed moves: Refresh = %+v", c)
+	}
+	// A drag believed in, the button up: it ends.
+	move(700, 10, true)
+	fb.SetPointerNow(platform.PointerNow{Point: platform.Point{X: 700, Y: 10}, Dragging: true})
+	if c = w.Refresh(); !c.Unstuck || !c.Reported || c.Now.Dragging || c.Now.Region != 1 {
+		t.Errorf("stuck drag: Refresh = %+v", c)
+	}
+	// A drag with the button down goes on.
+	move(700, 10, true)
+	fb.SetPointerNow(platform.PointerNow{Point: platform.Point{X: 700, Y: 10}, Buttons: 1, Dragging: true})
+	if c = w.Refresh(); c.Unstuck || c.Reported || !c.Now.Dragging {
+		t.Errorf("real drag: Refresh = %+v", c)
+	}
+	w.Stop()
+	if c = w.Refresh(); c.Read || c.Reported {
+		t.Errorf("stopped: Refresh = %+v", c)
+	}
+	wantAll := []PointerWatch{
+		want,
+		{Region: 1, Point: Point{700, 10}, Dragging: true},
+		want,
+		{Region: 1, Point: Point{700, 10}, Dragging: true},
+	}
+	if !reflect.DeepEqual(got, wantAll) {
+		t.Errorf("reports = %+v, want %+v", got, wantAll)
+	}
+}

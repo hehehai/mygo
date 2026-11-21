@@ -46,6 +46,7 @@ var (
 	surfaceOnce       sync.Once
 	msgInitTracking   func(obj id, sel objc.SEL, r NSRect, options uint, owner, info id) id
 	msgTimer          func(cls id, sel objc.SEL, interval float64, target id, selector objc.SEL, info id, repeats bool) id
+	msgTimerBlock     func(cls id, sel objc.SEL, interval float64, repeats bool, block uintptr) id
 	cgColorSpaceSRGB  uintptr
 	cgImageCreate     uintptr
 	cgImageRelease    uintptr
@@ -84,6 +85,7 @@ func loadSurface() {
 	surfaceOnce.Do(func() {
 		purego.RegisterFunc(&msgInitTracking, msgSendAddr)
 		purego.RegisterFunc(&msgTimer, msgSendAddr)
+		purego.RegisterFunc(&msgTimerBlock, msgSendAddr)
 		cgImageCreate = mustDlsym(libCG, "CGImageCreate")
 		cgImageRelease = mustDlsym(libCG, "CGImageRelease")
 		cgProviderCreate = mustDlsym(libCG, "CGDataProviderCreateWithCFData")

@@ -1399,6 +1399,65 @@ func (screen) Displays() []platform.Display {
 }
 func (screen) CursorPoint() platform.Point { return platform.Point{X: 10, Y: 20} }
 
+// pointerWatchers are WatchPointer's callbacks (MovePointer calls them).
+var (
+	pointerMu       sync.Mutex
+	pointerWatchers = map[int]func(platform.Point, bool){}
+	pointerWatchID  int
+)
+
+func (screen) WatchPointer(fn func(platform.Point, bool)) (stop func()) {
+	pointerMu.Lock()
+	defer pointerMu.Unlock()
+	pointerWatchID++
+	n := pointerWatchID
+	pointerWatchers[n] = fn
+	return func() {
+		pointerMu.Lock()
+		delete(pointerWatchers, n)
+		pointerMu.Unlock()
+	}
+}
+
+// pointerNow is what RefreshPointer reads (SetPointerNow).
+var pointerNow platform.PointerNow
+
+// SetPointerNow sets what the pointer's watchers read when refreshed
+// (platform.PointerRefresher): where the pointer is, the buttons down and
+// whether a drag is believed in (ended there when the primary button is
+// up, as macOS's backend does).
+func (b *Backend) SetPointerNow(n platform.PointerNow) {
+	pointerMu.Lock()
+	pointerNow = n
+	pointerMu.Unlock()
+}
+
+func (screen) RefreshPointer() platform.PointerNow {
+	pointerMu.Lock()
+	defer pointerMu.Unlock()
+	n := pointerNow
+	if n.Dragging && n.Buttons&1 == 0 {
+		n.Dragging, n.Unstuck = false, true
+		pointerNow.Dragging = false
+	}
+	n.Monitors, n.Watchers = len(pointerWatchers) > 0, len(pointerWatchers)
+	return n
+}
+
+// MovePointer tells the pointer's watchers (platform.PointerWatcher) it
+// is at p, dragging content or not. Call it on the main thread.
+func (b *Backend) MovePointer(p platform.Point, dragging bool) {
+	pointerMu.Lock()
+	fns := make([]func(platform.Point, bool), 0, len(pointerWatchers))
+	for _, fn := range pointerWatchers {
+		fns = append(fns, fn)
+	}
+	pointerMu.Unlock()
+	for _, fn := range fns {
+		fn(p, dragging)
+	}
+}
+
 // WindowButtons returns StartButtons and EndButtons, as Linux's desktop
 // layout gives them (platform.WindowButtonsBackend).
 func (b *Backend) WindowButtons() (start, end []string) { return b.StartButtons, b.EndButtons }

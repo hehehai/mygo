@@ -1326,6 +1326,42 @@ type Screen interface {
 	CursorPoint() Point
 }
 
+// PointerWatcher is a Screen that tells where the pointer is while it
+// moves in any app (macOS).
+type PointerWatcher interface {
+	// WatchPointer calls fn on the main thread with the pointer in screen
+	// coordinates at each move, drag, press and release of the primary
+	// button, in any app, and whether content (files, links, text) is
+	// being dragged; stop ends it.
+	WatchPointer(fn func(p Point, dragging bool)) (stop func())
+}
+
+// PointerRefresher is a PointerWatcher that reads the pointer when asked
+// (mygo.PointerWatcher.Refresh), and repairs what it keeps for the
+// watchers: a drag it still believes in with the primary button up ends,
+// and the pointer is read on a timer again where it should be.
+type PointerRefresher interface {
+	RefreshPointer() PointerNow
+}
+
+// PointerNow is the pointer as RefreshPointer read it, and the state of
+// the backend's watching after its repairs.
+type PointerNow struct {
+	Point    Point
+	Buttons  int  // the mouse buttons down, bit 0 the primary one
+	Dragging bool // content is dragged (after the repair)
+	// Unstuck: a drag was believed in with the primary button up; it ended.
+	Unstuck bool
+	// Active: the app is active. Polling: the pointer is read on a timer
+	// (while it is). Repolled: that timer was missing and was started.
+	Active, Polling, Repolled bool
+	// Monitors: the event monitors are there. Watchers: how many watch.
+	Monitors bool
+	Watchers int
+	// DragTimer: the timer that waits for a drag's end runs.
+	DragTimer bool
+}
+
 // Theme reads and overrides the system appearance.
 type Theme interface {
 	IsDark() bool
