@@ -88,6 +88,8 @@ type spanBuilder struct {
 	notes func(label string) int
 	// linkIndex is the inline of the link being built.
 	linkIndex int
+	// hl is the view's highlights (Options.Highlights).
+	hl []Highlight
 	// math makes math within text objects (Options.InlineMath).
 	math func(tex string, size float32) (InlineObject, bool)
 	// linkIcon makes the objects at the start of links (Options.LinkIcon).
@@ -127,6 +129,23 @@ func (sb *spanBuilder) add(text string, src, end int, exact bool, s spanStyle, l
 	if text == "" {
 		return
 	}
+	if exact && len(sb.hl) > 0 {
+		// Cut where a highlight starts or ends.
+		for len(text) > 0 {
+			n := sb.hlCut(src, src+len(text)) - src
+			for n < len(text) && !utf8.RuneStart(text[n]) {
+				n++
+			}
+			sb.addRun(text[:n], src, src+n, exact, s, link)
+			text, src = text[n:], src+n
+		}
+		return
+	}
+	sb.addRun(text, src, end, exact, s, link)
+}
+
+// addRun is add, past the highlights' cuts.
+func (sb *spanBuilder) addRun(text string, src, end int, exact bool, s spanStyle, link int) {
 	if sb.fade != nil && exact {
 		// Text revealed at different times fades in on its own: cut it
 		// where its opacity changes.
@@ -240,6 +259,9 @@ func (sb *spanBuilder) addSpan(text string, src, end int, exact bool, s spanStyl
 	}
 	if s.color.A > 0 {
 		sp.Color = s.color
+	}
+	if c, ok := sb.hlAt(src, end); ok {
+		sp.Background = c
 	}
 	if alpha < 1 {
 		// Not quite transparent: a color of alpha 0 is none, the text's.

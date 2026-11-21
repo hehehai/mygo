@@ -8432,6 +8432,20 @@ func (_handle Element) TextCaret(r Rect) Element {
 	return wrapElement(_node.TextCaret(r))
 }
 
+// TextClicked reports a click on the text of a Selectable container (a
+// press let go of without selecting anything) since the last frame, with
+// the paragraph it fell on and the rune the caret went to (Start and End
+// both): as a reader's view opens the passage marked there.
+func (_handle Element) TextClicked() (SelectedText, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return *new(SelectedText), false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.TextClicked()
+}
+
 // TextColor sets the color of text.
 func (_handle Element) TextColor(c Color) Element {
 	_node := _handle.node()
@@ -8458,6 +8472,19 @@ func (_handle Element) TextRanges(ranges ...TextRange) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.TextRanges(ranges...))
+}
+
+// TextSelecting reports whether the pointer is selecting text of a
+// Selectable container (pressed on it and not let go of yet): a view
+// shows what it offers for a selection once it is made.
+func (_handle Element) TextSelecting() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.TextSelecting()
 }
 
 // TextSelection returns the selection of a text input as offsets in runes

@@ -129,6 +129,13 @@ type Options struct {
 	// it shares that view's, whose Copy as Markdown copies its text as
 	// the Markdown of its own source.
 	ShareSelection bool
+	// Highlights color passages of the source behind their text, as
+	// those a reader marked (highlight.go): SelectionRange and ClickedAt
+	// tell the app where to add one and which was clicked.
+	Highlights []Highlight
+	// ContextMenu adds items to the view's context menu, after its own
+	// (not with ShareSelection).
+	ContextMenu func(m *ui.Menu)
 
 	images sync.Map // url → *imageEntry
 }
@@ -238,6 +245,8 @@ type viewState struct {
 	// noted in.
 	nested []nestedView
 	cur    int
+	// hl is the highlights the paragraphs were built with.
+	hl []Highlight
 }
 
 // nestedView is a view sharing the selection of the view around it,
@@ -346,6 +355,9 @@ func build(c *ui.Context, src string, o *Options, streaming bool) ui.Element {
 			if m.Item(l10n.In(c.Locale()).CopyAsMarkdown()).Chosen() {
 				c.Services().WriteClipboardData(markdownData(st.copyMarkdown(root.SelectedTexts())))
 			}
+			if o.ContextMenu != nil {
+				o.ContextMenu(m)
+			}
 		})
 		if root.FocusWithin() && root.Shortcut(ui.Cmd|ui.Shift, ui.KeyC) {
 			c.Services().WriteClipboardData(markdownData(st.copyMarkdown(root.SelectedTexts())))
@@ -386,6 +398,11 @@ func (st *viewState) theme(c *ui.Context) {
 		}
 	}
 	st.sb.d, st.sb.th = st.doc, &st.th
+	if !slices.Equal(st.hl, st.o.Highlights) {
+		st.hl = slices.Clone(st.o.Highlights)
+		clear(st.paras)
+	}
+	st.sb.hl = st.hl
 }
 
 // forget drops what the view made of its blocks.
