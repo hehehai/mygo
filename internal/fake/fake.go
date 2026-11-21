@@ -637,6 +637,8 @@ type Window struct {
 	KeyHeir   *Window
 	// VibrancyStyle is what SetVibrancyStyle set last.
 	VibrancyStyle platform.VibrancyStyle
+	// Spaces is what SpaceInfo reports (tests set it).
+	Spaces platform.SpaceInfo
 	// AsyncFunction answers CallAsyncFunction.
 	AsyncFunction func(body string) (string, error)
 	// AsyncCallback, when set, receives CallAsyncFunction calls to answer
@@ -856,6 +858,13 @@ func (w *Window) SetActiveAppearance(v bool)      { w.mu.Lock(); w.active = v; w
 func (w *Window) SetWindowButtonsTheme(string) {}
 
 func (w *Window) SetInputRegion(r []platform.Rect) { w.mu.Lock(); w.InputRegion = r; w.mu.Unlock() }
+
+// SpaceInfo is platform.SpaceReader's: what the test set in Spaces.
+func (w *Window) SpaceInfo() platform.SpaceInfo {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.Spaces
+}
 
 func (w *Window) SetVibrancyStyle(s platform.VibrancyStyle) {
 	w.mu.Lock()

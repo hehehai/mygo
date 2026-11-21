@@ -1700,6 +1700,52 @@ func (w *Window) SetAutoHideMenuBar(v bool) {
 	w.do(func(n platform.Window) { n.SetAutoHideMenu(v) })
 }
 
+// SpaceInfo is where macOS has a window among the Spaces (the virtual
+// desktops, full-screen apps' included) and what decides it, read back
+// from AppKit, for an app's diagnostics: Window.SpaceInfo. Known is false
+// elsewhere, and for a window not made yet or closed.
+type SpaceInfo struct {
+	Known bool
+	// Number is the window server's number of the window.
+	Number int
+	// Visible: the window is ordered in (isVisible); OnActiveSpace: it is
+	// on the Space the user is on (isOnActiveSpace); Occluded: no part of
+	// it can be seen (occlusionState).
+	Visible, OnActiveSpace, Occluded bool
+	// Behavior is the NSWindowCollectionBehavior AppKit has (1 can join
+	// all Spaces, 1<<4 stationary, …), Level the window level, Sharing the
+	// NSWindowSharingType (0: kept out of screenshots), Style the
+	// NSWindowStyleMask.
+	Behavior uint
+	Level    int
+	Sharing  int
+	Style    uint
+	// Rejoined counts the shows of a panel that found it off the Spaces
+	// it belongs on (another behavior, or not on the active Space while
+	// it should be on all of them): it was given its behavior again.
+	Rejoined int
+}
+
+func (s SpaceInfo) String() string {
+	if !s.Known {
+		return "unknown"
+	}
+	return fmt.Sprintf("window %d visible %v onActiveSpace %v occluded %v behavior %#x level %d sharing %d style %#x rejoined %d",
+		s.Number, s.Visible, s.OnActiveSpace, s.Occluded, s.Behavior, s.Level, s.Sharing, s.Style, s.Rejoined)
+}
+
+// SpaceInfo reads where the window is among the Spaces and what decides
+// it (SpaceInfo). macOS; elsewhere the zero SpaceInfo.
+func (w *Window) SpaceInfo() SpaceInfo {
+	return get(w, func(n platform.Window) SpaceInfo {
+		r, ok := n.(platform.SpaceReader)
+		if !ok {
+			return SpaceInfo{}
+		}
+		return SpaceInfo(r.SpaceInfo())
+	})
+}
+
 // NativeHandle returns the native window: NSWindow* on macOS, GtkWindow* on
 // Linux and HWND on Windows.
 func (w *Window) NativeHandle() uintptr { return get(w, platform.Window.Handle) }

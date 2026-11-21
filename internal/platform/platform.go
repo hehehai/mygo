@@ -1349,6 +1349,27 @@ type Screen interface {
 	CursorPoint() Point
 }
 
+// SpaceReader is a Window that tells where it is among the Spaces (the
+// virtual desktops) and what decides it: mygo.Window.SpaceInfo. Only
+// macOS has it.
+type SpaceReader interface {
+	SpaceInfo() SpaceInfo
+}
+
+// SpaceInfo is mygo.SpaceInfo.
+type SpaceInfo struct {
+	Known         bool
+	Number        int
+	Visible       bool
+	OnActiveSpace bool
+	Occluded      bool
+	Behavior      uint
+	Level         int
+	Sharing       int
+	Style         uint
+	Rejoined      int
+}
+
 // VibrancyStyle shapes a window's material (mygo.VibrancyStyle): Frame,
 // in the content's points from its top left (zero: the whole content),
 // inset by Top, Right, Bottom and Left; its Corners (bits: top left, top

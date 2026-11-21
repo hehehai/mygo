@@ -136,6 +136,12 @@ type window struct {
 	downloads     map[id][2]string // WKDownload: URL and path
 	attention     int              // the request of FlashFrame
 	maximized     bool
+	// behavior is the collection behavior a panel was made with (or
+	// SetVisibleOnAllWorkspaces gave it), which it is given again as it
+	// shows (rejoinSpaces), and rejoins counts the shows that found it off
+	// the Spaces it belongs on.
+	behavior uint
+	rejoins  int
 	// auxiliary tells that SetVisibleOnAllWorkspaces made a window that
 	// cannot go full screen an auxiliary of full-screen Spaces, to undo.
 	auxiliary     bool
@@ -296,6 +302,7 @@ func (w *window) create() {
 		behavior = collectionFullScreenAuxiliary | collectionTransient
 	}
 	send(w.win, "setCollectionBehavior:", uintptr(behavior))
+	w.behavior = behavior
 	// A child window takes its parent's level when that is higher.
 	w.onTop = o.AlwaysOnTop
 	w.applyLevel()
@@ -1429,6 +1436,52 @@ func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 		}
 	}
 	send(w.win, "setCollectionBehavior:", uintptr(behavior))
+	w.behavior = behavior
+}
+
+// rejoinSpaces gives a hidden panel its collection behavior again before
+// it shows: on every Space, the one the user is on included. On a Mac
+// with several desktops Inboxly's notch panel (OverMenuBar), made with
+// CanJoinAllSpaces, was found on one Space only, sliding away with it as
+// the user switched and showing there only, though a fresh panel made
+// the same way stays on all of them (macOS 26.7; the cause is not known;
+// an NSPanel whose sticky tag the window server lost, AppKit's
+// collectionBehavior unchanged, does it). Set without CanJoinAllSpaces
+// first, the behavior reaches the window server even if AppKit's own
+// value did not change; a hidden window bound to one Space is on every
+// Space again at once. A show that found another behavior, or the window
+// off the active Space, counts in SpaceInfo's Rejoined. A window that
+// shows stays where it is.
+func (w *window) rejoinSpaces() {
+	if !w.opts.Panel || w.behavior&collectionCanJoinAllSpaces == 0 || sendBool(w.win, "isVisible") {
+		return
+	}
+	if uint(sendInt(w.win, "collectionBehavior")) != w.behavior || !sendBool(w.win, "isOnActiveSpace") {
+		w.rejoins++
+	}
+	send(w.win, "setCollectionBehavior:", uintptr(w.behavior&^collectionCanJoinAllSpaces))
+	send(w.win, "setCollectionBehavior:", uintptr(w.behavior))
+}
+
+// SpaceInfo reads back what AppKit has of the window's Spaces
+// (platform.SpaceReader).
+func (w *window) SpaceInfo() platform.SpaceInfo {
+	if w.closed || w.win == 0 {
+		return platform.SpaceInfo{}
+	}
+	const occlusionStateVisible = 1 << 1
+	return platform.SpaceInfo{
+		Known:         true,
+		Number:        sendInt(w.win, "windowNumber"),
+		Visible:       sendBool(w.win, "isVisible"),
+		OnActiveSpace: sendBool(w.win, "isOnActiveSpace"),
+		Occluded:      sendInt(w.win, "occlusionState")&occlusionStateVisible == 0,
+		Behavior:      uint(sendInt(w.win, "collectionBehavior")),
+		Level:         sendInt(w.win, "level"),
+		Sharing:       sendInt(w.win, "sharingType"),
+		Style:         uint(sendInt(w.win, "styleMask")),
+		Rejoined:      w.rejoins,
+	}
 }
 
 // SetIcon does nothing: macOS windows show no icon of their own.

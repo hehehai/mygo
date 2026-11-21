@@ -5,6 +5,8 @@ package mygo
 import (
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/internal/platform"
 )
 
 // TestPanelOptions gives a panel's backend a window above others, out of
@@ -80,6 +82,27 @@ func TestPanelOverMenuBar(t *testing.T) {
 	_, fw = testWindow(t, WindowOptions{OverMenuBar: true})
 	if fw.Opts.OverMenuBar {
 		t.Error("a window that is no panel took OverMenuBar")
+	}
+}
+
+// TestSpaceInfo reads where the platform has a window among the Spaces,
+// and the zero SpaceInfo for a window that is gone.
+func TestSpaceInfo(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{Panel: true, OverMenuBar: true})
+	if s := w.SpaceInfo(); s.Known || s.String() != "unknown" {
+		t.Errorf("SpaceInfo before the platform told = %+v (%s)", s, s)
+	}
+	fw.Spaces = platform.SpaceInfo{Known: true, Number: 7, Visible: true, Behavior: 0x151, Level: 27, Sharing: 0, Style: 0x80, Rejoined: 2}
+	s := w.SpaceInfo()
+	if !s.Known || s.Number != 7 || !s.Visible || s.OnActiveSpace || s.Behavior != 0x151 || s.Level != 27 {
+		t.Errorf("SpaceInfo = %+v", s)
+	}
+	if want := "window 7 visible true onActiveSpace false occluded false behavior 0x151 level 27 sharing 0 style 0x80 rejoined 2"; s.String() != want {
+		t.Errorf("String = %q, want %q", s, want)
+	}
+	w.Destroy()
+	if s := w.SpaceInfo(); s.Known {
+		t.Errorf("SpaceInfo of a closed window = %+v", s)
 	}
 }
 

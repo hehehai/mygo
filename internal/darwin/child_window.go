@@ -52,6 +52,7 @@ func (w *window) onScreen() bool {
 // does not show. Then its own children go above it.
 func (w *window) showAboveParent(key bool) {
 	w.hiddenWithParent, w.hidMiniaturized = false, false
+	w.rejoinSpaces()
 	switch {
 	case w.isChild() && w.parent.onScreen():
 		w.b.orderingChildren = true
