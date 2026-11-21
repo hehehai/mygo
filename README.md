@@ -1,3 +1,9 @@
+> **This is ActNow's maintenance fork of [egoist/mygo](https://github.com/egoist/mygo).**
+> It carries the patches ActNow's apps (Refto, Inboxly, Dicta, Pik, AudioSmith, Auralink, VoxtMini, CaptionCraft, HereNow, Paralign) need on top of an upstream release.
+> Branches: `main` is the line our apps build against; `upstream` mirrors egoist/mygo's `main`. Tags are `vX.Y.Z-actnow.N` (upstream release X.Y.Z plus our patches, N-th build).
+> The module path stays `github.com/egoist/mygo`; apps use it with `replace github.com/egoist/mygo => github.com/hehehai/mygo vX.Y.Z-actnow.N`.
+> What the fork changes, and where each change came from: [ACTNOW.md](ACTNOW.md). MyGo is MIT-licensed; all credit for MyGo goes to its upstream authors.
+
 <p align="center">
 <img width="800" height="360" alt="MyGo!!!!!" src="https://github.com/user-attachments/assets/c3eee9bc-5f22-4032-95b6-776e8381910a" />
 </p>
