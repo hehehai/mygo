@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"image"
+
 	"github.com/egoist/mygo/internal/scene"
 	"github.com/egoist/mygo/transfer"
 )
@@ -32,6 +34,11 @@ type valueDrag struct {
 	ghost    *node
 	canceled bool
 	native   bool
+	// preview is a native drag's preview as it started, hot its point
+	// under the pointer; scale what ScaleDataDrag shows of it (0: 1).
+	preview image.Image
+	hot     image.Point
+	scale   float32
 	// count is how many things the value stands for, as rows dragged
 	// (countedDrag), for the badge beside the pointer.
 	count int
@@ -189,6 +196,7 @@ func (rt *engine) dragMove(x, y float32) {
 					done(result)
 				}
 			}
+			d.preview, d.hot = options.Preview, options.Hotspot
 			if err := rt.host.startDataDrag(src.data(), value, options, x*rt.zoomFactor(), y*rt.zoomFactor()); err != nil {
 				options.Done(transfer.Result{Err: err})
 			}

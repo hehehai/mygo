@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"os"
 	"slices"
 	"sync"
@@ -54,6 +55,9 @@ type host interface {
 	startDrag()
 	startDataDrag(transfer.Data, any, transfer.DragOptions, float32, float32) error
 	cancelDataDrag()
+	// setDataDragPreview shows img, the point hot under the pointer, as
+	// the preview of the native drag the window started, while it lasts.
+	setDataDragPreview(img image.Image, hot image.Point)
 	setDropFormats([]transfer.Format)
 	titleBarDoubleClicked()
 	// setMaximizeButton tells where the view shows the window's maximize

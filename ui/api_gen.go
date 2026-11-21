@@ -332,6 +332,17 @@ func (_handle *Context) CloseToast(id string) {
 	_ctx.CloseToast(id)
 }
 
+// DataDrag reports the native drag over the window, wherever it is (over
+// an element that takes it or not), false when none is: a view follows a
+// drag of its own across regions, as a sidebar it comes over.
+func (_handle *Context) DataDrag() (DataDragInfo, bool) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return *new(DataDragInfo), false
+	}
+	return _ctx.DataDrag()
+}
+
 // Direction returns the direction of the elements built now: that of the
 // element they go in. Widgets of an app's own read it to draw what points
 // along the line, as an arrow forward:
@@ -579,6 +590,20 @@ func (_handle *Context) SafeArea() (float32, float32, float32, float32) {
 		return 0, 0, 0, 0
 	}
 	return _ctx.SafeArea()
+}
+
+// ScaleDataDrag shows the preview of the native drag an element of this
+// window started (DragData) at scale of its size, 1 its own, keeping the
+// point pressed under the pointer: a drag made small over a list it
+// drops into. It does nothing without such a drag or a preview, and on
+// platforms that cannot change a drag's preview (all but macOS); scale
+// is kept between 0.05 and 1.
+func (_handle *Context) ScaleDataDrag(scale float32) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.ScaleDataDrag(scale)
 }
 
 // SetMenuPresentation sets how the window shows its popup menus: those of

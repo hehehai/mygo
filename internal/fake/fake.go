@@ -1575,6 +1575,14 @@ func (s *Surface) SetDropFormats(f []transfer.Format) {
 	s.dropFormats = append([]transfer.Format(nil), f...)
 }
 
+// SetDataDragPreview changes the active drag's preview (Preview, Width,
+// Height, HotX, HotY of DataDrag). Main thread only.
+func (s *Surface) SetDataDragPreview(preview []byte, width, height, hotX, hotY int) {
+	if d := s.dataDrag; d != nil {
+		d.Preview, d.Width, d.Height, d.HotX, d.HotY = preview, width, height, hotX, hotY
+	}
+}
+
 // DataDrag returns the active native-source request. Main thread only.
 func (s *Surface) DataDrag() *platform.DragRequest { return s.dataDrag }
 

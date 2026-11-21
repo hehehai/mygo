@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"image"
 	"log"
 	"os"
 	"slices"
@@ -827,7 +828,12 @@ func (h *windowHost) repaintTimer(at time.Time) {
 func (h *windowHost) startDataDrag(data transfer.Data, local any, options transfer.DragOptions, x, y float32) error {
 	return h.conn.StartDataDrag(data, local, options, float64(x), float64(y))
 }
-func (h *windowHost) cancelDataDrag()                    { h.conn.CancelDataDrag() }
+func (h *windowHost) cancelDataDrag() { h.conn.CancelDataDrag() }
+func (h *windowHost) setDataDragPreview(img image.Image, hot image.Point) {
+	if h.conn.SetDataDragPreview != nil {
+		h.conn.SetDataDragPreview(img, hot)
+	}
+}
 func (h *windowHost) setDropFormats(f []transfer.Format) { h.conn.Surface.SetDropFormats(f) }
 
 func (h *windowHost) post(fn func()) {

@@ -90,6 +90,10 @@ type headless struct {
 	dragData    transfer.Data
 	dragLocal   any
 	dragOptions transfer.DragOptions
+	// dragPreview is the drag's preview, as its source gave it or as
+	// ScaleDataDrag changed it since, with its point under the pointer.
+	dragPreview image.Image
+	dragHot     image.Point
 	// webViews are where the last frame showing web views showed them;
 	// tabbedInto the web view Tab gave the keyboard last, from its end
 	// when tabbedBack.
@@ -179,12 +183,19 @@ func (h *headless) clipboardFormats() []transfer.Format { return h.readClipboard
 
 func (h *headless) startDataDrag(d transfer.Data, local any, o transfer.DragOptions, x, y float32) error {
 	h.dragData, h.dragLocal, h.dragOptions = d.Snapshot(), local, o
+	h.dragPreview, h.dragHot = o.Preview, o.Hotspot
 	return nil
+}
+func (h *headless) setDataDragPreview(img image.Image, hot image.Point) {
+	if h.dragOptions.Done != nil {
+		h.dragPreview, h.dragHot = img, hot
+	}
 }
 func (h *headless) cancelDataDrag() { h.finishDataDrag(transfer.Result{Canceled: true}) }
 func (h *headless) finishDataDrag(r transfer.Result) {
 	done := h.dragOptions.Done
 	h.dragData, h.dragLocal, h.dragOptions = transfer.Data{}, nil, transfer.DragOptions{}
+	h.dragPreview, h.dragHot = nil, image.Point{}
 	if done != nil {
 		done(r)
 	}
@@ -1100,6 +1111,56 @@ func (t *Tester) DropDataAt(x, y float32, data transfer.Data, operations transfe
 // (a press moved past the threshold), while the drag lasts.
 func (t *Tester) DraggedData() (transfer.Data, bool) {
 	return t.h.dragData, t.h.dragOptions.Done != nil
+}
+
+// DraggedPreview is the preview of the drag an element started, with the
+// point of it under the pointer, as the platform shows it now: the
+// source's (DragOptions.Preview, or the element's picture), or what
+// Context.ScaleDataDrag made of it since. nil without a drag.
+func (t *Tester) DraggedPreview() (image.Image, image.Point) {
+	return t.h.dragPreview, t.h.dragHot
+}
+
+// DragDraggedDataOver brings the drag an element of this window started
+// (DragData) over (x, y), as the platform does with a drag of this
+// process: its value (Drag) comes with it, for Drop and DragOver, and
+// suggested is the operation the keys held ask for (None: none). It
+// reports whether an element takes it there.
+func (t *Tester) DragDraggedDataOver(x, y float32, suggested transfer.Operation) bool {
+	ev, ok := t.draggedEvent(suggested)
+	if !ok {
+		return false
+	}
+	return t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDragOver, X: float64(x), Y: float64(y), Drag: ev})
+}
+
+// DropDraggedDataAt drops the drag an element of this window started at
+// (x, y), as DragDraggedDataOver brings it there, and ends the drag with
+// the operation the element taking it chose (refused: canceled), as the
+// platform tells the source. It reports whether an element took it.
+func (t *Tester) DropDraggedDataAt(x, y float32, suggested transfer.Operation) bool {
+	if !t.DragDraggedDataOver(x, y, suggested) {
+		t.FinishDataDrag(transfer.Result{Canceled: true})
+		return false
+	}
+	ev, _ := t.draggedEvent(suggested)
+	taken := t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDrop, X: float64(x), Y: float64(y), Drag: ev})
+	if !taken {
+		t.FinishDataDrag(transfer.Result{Canceled: true})
+		return false
+	}
+	t.FinishDataDrag(transfer.Result{Operation: ev.Operation})
+	return true
+}
+
+// draggedEvent is the platform's query for this window's own drag.
+func (t *Tester) draggedEvent(suggested transfer.Operation) (*platform.DataDragEvent, bool) {
+	h := t.h
+	if h.dragOptions.Done == nil {
+		return nil, false
+	}
+	offer := transfer.Offer{Formats: h.dragData.Formats(), Operations: h.dragOptions.Operations.Allowed(), Suggested: suggested}
+	return &platform.DataDragEvent{Offer: offer, Session: "tester", Local: h.dragLocal, Data: h.dragData, Resolved: true}, true
 }
 
 // FinishDataDrag ends the drag an element started with r, as the

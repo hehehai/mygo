@@ -91,6 +91,25 @@ func (w *Window) startDataDragPrepared(data transfer.Data, local any, options Dr
 	return nil
 }
 
+// setDataDragPreview shows img as the preview of the window's native
+// drag, hot under the pointer, where the platform can change it.
+func (w *Window) setDataDragPreview(img image.Image, hot image.Point) {
+	s := activeDataDrag
+	if s == nil || s.w != w || w.conn == nil || img == nil {
+		return
+	}
+	ps, ok := w.conn.Surface.(platform.DragPreviewSurface)
+	if !ok {
+		return
+	}
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 || b.Dx() > 4096 || b.Dy() > 4096 {
+		return
+	}
+	pix, width, height := dragImage(img)
+	ps.SetDataDragPreview(pix, width, height, hot.X, hot.Y)
+}
+
 func dragImage(img image.Image) ([]byte, int, int) {
 	if img == nil {
 		return nil, 0, 0

@@ -224,13 +224,7 @@ func (s *surface) StartDataDrag(r platform.DragRequest) {
 		img := send(class("NSImage"), "imageNamed:", uintptr(nsString("NSMultipleDocuments")))
 		width, height := r.Width, r.Height
 		if len(r.Preview) > 0 {
-			pix := bytes.Clone(r.Preview)
-			for i := 0; i < len(pix); i += 4 {
-				pix[i], pix[i+2] = pix[i+2], pix[i]
-			}
-			var b bytes.Buffer
-			png.Encode(&b, &image.RGBA{Pix: pix, Stride: 4 * width, Rect: image.Rect(0, 0, width, height)})
-			img = autorelease(send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(b.Bytes()))))
+			img = dragNSImage(r.Preview, width, height)
 		} else {
 			width, height = 32, 32
 		}
@@ -255,6 +249,47 @@ func (s *surface) StartDataDrag(r platform.DragRequest) {
 		}
 		send(src.session, "setAnimatesToStartingPositionsOnCancelOrFail:", 1)
 	})
+}
+
+// SetDataDragPreview shows preview for every item of the drag the surface
+// started, (hotX, hotY) of it under the pointer, the items stacked a
+// little apart as StartDataDrag laid them (platform.DragPreviewSurface).
+func (s *surface) SetDataDragPreview(preview []byte, width, height, hotX, hotY int) {
+	src := s.dataDrag
+	if src == nil || src.session == 0 || len(preview) < 4*width*height || width <= 0 || height <= 0 {
+		return
+	}
+	withPool(func() {
+		img := dragNSImage(preview, width, height)
+		// The session's frames in screen coordinates (no view): y goes up,
+		// the image's top hotY above the pointer.
+		at := msgPoint(src.session, sel("draggingLocation"))
+		step := 3
+		if width < 96 && height < 96 {
+			step = 2
+		}
+		classes := nsArray(class("NSPasteboardItem"))
+		block := newBlock(func(_ objc.Block, item id, n int, stop uintptr) {
+			off := float64(min(n, 4) * step)
+			frame := NSRect{Origin: NSPoint{at.X - float64(hotX) + off, at.Y + float64(hotY) - float64(height) - off}, Size: NSSize{float64(width), float64(height)}}
+			msgDraggingFrame(item, sel("setDraggingFrame:contents:"), frame, img)
+		})
+		send(src.session, "enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:",
+			0, 0, uintptr(classes), uintptr(send(class("NSDictionary"), "dictionary")), uintptr(block))
+		block.Release()
+	})
+}
+
+// dragNSImage is an NSImage of a preview (premultiplied BGRA, a pixel a
+// point).
+func dragNSImage(preview []byte, width, height int) id {
+	pix := bytes.Clone(preview[:4*width*height])
+	for i := 0; i < len(pix); i += 4 {
+		pix[i], pix[i+2] = pix[i+2], pix[i]
+	}
+	var b bytes.Buffer
+	png.Encode(&b, &image.RGBA{Pix: pix, Stride: 4 * width, Rect: image.Rect(0, 0, width, height)})
+	return autorelease(send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(b.Bytes()))))
 }
 
 func (src *macDataSource) pasteboardItems() []id {

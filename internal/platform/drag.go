@@ -33,3 +33,11 @@ type DataDragEvent struct {
 	HasFiles  bool
 	Resolved  bool // the core substituted its process-local data
 }
+
+// DragPreviewSurface is a surface that can change the preview of the
+// native drag it started while the drag lasts (macOS): preview as in
+// DragRequest, its point (hotX, hotY) kept under the pointer. Main thread
+// only; nothing without such a drag.
+type DragPreviewSurface interface {
+	SetDataDragPreview(preview []byte, width, height, hotX, hotY int)
+}
