@@ -1070,6 +1070,72 @@ func (t *Tray) Dark() bool {
 // again.
 func (t *Tray) OnAppearanceChange(fn func()) (off func()) { return t.onAppearance.add(fn, false) }
 
+// ErrTrayOverlay is what SetOverlay and SetDot return where trays draw
+// nothing over their icons (all but macOS).
+var ErrTrayOverlay = errors.New("mygo: this platform's tray draws nothing over its icon")
+
+// SetOverlay draws a PNG image over the icon in its own colors, not as a
+// template, where the icon is drawn (centred, or on the left of a title,
+// following the title as it changes) and sized as SetIcon sizes it; nil
+// removes it. With a template icon that leaves out a part of the mark,
+// the overlay draws that part in color — an accent that says "look" —
+// while the rest follows the menu bar; Dark says which bar it is on, to
+// pick a color with contrast. Clicks go through it to the icon. macOS;
+// elsewhere ErrTrayOverlay.
+func (t *Tray) SetOverlay(png []byte) error {
+	var err error
+	t.do(func(n platform.Tray) {
+		d, ok := n.(platform.TrayDecorations)
+		if !ok {
+			err = ErrTrayOverlay
+			return
+		}
+		err = d.SetOverlay(png)
+	})
+	return err
+}
+
+// SetDot shows a dot of a CSS color (see WindowOptions.BackgroundColor's
+// forms) over the icon's top right corner, 5 points across, its centre
+// 3.5 points in from the icon's top and right edges, following the icon
+// as a title comes and goes; "" removes it. The dot keeps its color over a
+// template icon, which macOS tints but cannot color, so a template icon
+// can say "busy" in red: leave a gap in the icon where the dot goes. It
+// returns an error for a color it cannot parse, and ErrTrayOverlay where
+// trays draw nothing over their icons (all but macOS).
+func (t *Tray) SetDot(color string) error {
+	var c platform.Color
+	if color != "" {
+		var err error
+		if c, err = parseColor(color); err != nil {
+			return err
+		}
+	}
+	var err error
+	t.do(func(n platform.Tray) {
+		d, ok := n.(platform.TrayDecorations)
+		if !ok {
+			err = ErrTrayOverlay
+			return
+		}
+		d.SetDot(c, color != "")
+	})
+	return err
+}
+
+// NativeButton returns the icon's native view, for native APIs MyGo does
+// not wrap (layers, accessibility): the NSStatusBarButton* on macOS; 0 on
+// other platforms and once the icon is destroyed. Use it on the main
+// thread, and only while the icon lives.
+func (t *Tray) NativeButton() uintptr {
+	return onMainValue(func() uintptr {
+		if d, ok := t.native.(platform.TrayDecorations); ok && t.native != nil {
+			return d.Handle()
+		}
+		return 0
+	})
+}
+
 // NotificationOptions configures a desktop notification.
 type NotificationOptions struct {
 	// ID identifies the notification: App.OnNotificationClick receives

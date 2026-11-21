@@ -503,6 +503,15 @@ tray.OnAppearanceChange(draw)
 draw()
 ```
 
+On macOS a template icon can also show a part in color, which macOS cannot
+tint: `SetOverlay(png)` draws a PNG in its own colors over the icon, where
+the icon is drawn and sized as it (following a title as it comes and
+goes), and `SetDot(color)` a dot of a CSS color, 5 points across, over the
+icon's top right corner; leave a gap in the template where they go. nil
+and `""` remove them; clicks go through to the icon. Other platforms
+return `ErrTrayOverlay`. `NativeButton` gives the icon's
+`NSStatusBarButton*`, for native APIs MyGo does not wrap.
+
 `Tray.PopUpMenu` opens the menu set with `SetMenu` programmatically. On
 macOS, AppKit places it below the status item and highlights its button
 while the menu is open. On Windows 11 it opens as the system's tray menus

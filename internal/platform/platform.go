@@ -1516,6 +1516,20 @@ type Tray interface {
 	Destroy()
 }
 
+// TrayDecorations is a Tray that draws over its icon in color, which a
+// template icon cannot have, and gives its native view (macOS).
+type TrayDecorations interface {
+	// SetOverlay draws png over the icon in its own colors, sized and
+	// placed as the icon; nil or empty removes it.
+	SetOverlay(png []byte) error
+	// SetDot shows a dot of c over the icon's top right corner, or removes
+	// it when on is false.
+	SetDot(c Color, on bool)
+	// Handle is the icon's native view (NSStatusBarButton* on macOS), 0
+	// once the icon is destroyed.
+	Handle() uintptr
+}
+
 // Notification is a desktop notification.
 type Notification struct {
 	ID       string

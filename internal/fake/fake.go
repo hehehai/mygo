@@ -1501,6 +1501,49 @@ func (b *Backend) PreferenceReads() int {
 type tray struct {
 	b *Backend
 	h platform.TrayHandler
+	// overlay and dot are what SetOverlay and SetDot draw over the icon;
+	// gone is set once it is destroyed.
+	overlay []byte
+	dot     platform.Color
+	dotOn   bool
+	gone    bool
+}
+
+// TrayHandle is the native handle every fake tray reports until destroyed.
+const TrayHandle uintptr = 0x7ea7
+
+func (t *tray) SetOverlay(png []byte) error {
+	t.b.mu.Lock()
+	t.overlay = png
+	t.b.mu.Unlock()
+	return nil
+}
+
+func (t *tray) SetDot(c platform.Color, on bool) {
+	t.b.mu.Lock()
+	t.dot, t.dotOn = c, on
+	t.b.mu.Unlock()
+}
+
+func (t *tray) Handle() uintptr {
+	t.b.mu.Lock()
+	defer t.b.mu.Unlock()
+	if t.gone {
+		return 0
+	}
+	return TrayHandle
+}
+
+// TrayDecorations reports what the last tray made draws over its icon:
+// its overlay (nil for none) and its dot (ok false for none).
+func (b *Backend) TrayDecorations() (overlay []byte, dot platform.Color, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.trays) == 0 {
+		return nil, platform.Color{}, false
+	}
+	t := b.trays[len(b.trays)-1]
+	return t.overlay, t.dot, t.dotOn
 }
 
 func (t *tray) Dark() bool {
@@ -1533,6 +1576,7 @@ func (*tray) SetActivatable(bool)         {}
 func (*tray) Bounds() platform.Rect { return platform.Rect{X: 1300, Width: 30, Height: 25} }
 func (t *tray) Destroy() {
 	t.b.mu.Lock()
+	t.gone = true
 	t.b.trays = slices.DeleteFunc(t.b.trays, func(x *tray) bool { return x == t })
 	t.b.mu.Unlock()
 }
