@@ -75,6 +75,26 @@ func TestConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestBundleVersion(t *testing.T) {
+	for v, want := range map[string]string{
+		"1.2.3": "1.2.3", "0.1.0-beta.1": "0.1.0", "1.2.3+42": "1.2.3", "2.0.0-rc.1+abc": "2.0.0",
+		"7": "7", "1.2": "1.2", "1.2.3.4": "1.2.3.4", "next": "next", "": "",
+	} {
+		if got := bundleVersion(v); got != want {
+			t.Errorf("bundleVersion(%q) = %q, want %q", v, got, want)
+		}
+	}
+	plist := string(infoPlist(&Config{Name: "A", Version: "0.1.0-beta.1"}, "A", "", ""))
+	for _, want := range []string{
+		"<key>CFBundleShortVersionString</key>\n\t<string>0.1.0-beta.1</string>",
+		"<key>CFBundleVersion</key>\n\t<string>0.1.0</string>",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("Info.plist has no %q", want)
+		}
+	}
+}
+
 func TestInfoPlist(t *testing.T) {
 	c := &Config{Name: "A & B", Identifier: "com.example.ab", Version: "1.2.3", MacOS: MacOS{MinimumSystemVersion: "12.0"}, URLSchemes: []string{"ab"}}
 	plist := string(infoPlist(c, "A & B", "icon.icns", ""))
