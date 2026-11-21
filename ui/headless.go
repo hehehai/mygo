@@ -594,6 +594,15 @@ func (t *Tester) SetDirection(d Direction) {
 // Frame renders another frame, as when the view's state changed.
 func (t *Tester) Frame() { t.h.requested.Store(true); t.settle() }
 
+// AccessibilityOn has assistive technology read the window from now on,
+// as a screen reader turned on does as it first asks for the window's
+// tree, and settles: the view's Context.AccessibilityActive reports true
+// from the frame it builds.
+func (t *Tester) AccessibilityOn() {
+	t.rt.event(platform.SurfaceEvent{Kind: platform.AccessibilityOn})
+	t.settle()
+}
+
 // FramePending reports whether the view still asks for a frame, as one
 // that animates or never settles does after an input or Frame. The
 // frames of After and Painter.After wait for Advance to reach their
