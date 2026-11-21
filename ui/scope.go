@@ -236,6 +236,21 @@ func (e *node) PressedInside() bool {
 	return rt.pressedWithin(rt.downs[len(rt.downs)-1], e)
 }
 
+// PressedWithin reports whether the pointer is held down now on the
+// element, on an element inside it, or in a popover attached to one of
+// them, wherever the pointer has moved since: a slider of a bar dragged
+// off the bar keeps it pressed within the bar, which may stay shown till
+// it is let go of. PressedInside tells that a press went down there since
+// the last frame; PressedWithin that one is held there, as FocusWithin
+// tells where the focus is. Unlike Pressed it does not make the element a
+// control, and a press on a scroll bar is not one.
+func (e *node) PressedWithin() bool {
+	if !e.hasState() || e.c.rt.pressed == nil {
+		return false
+	}
+	return e.c.rt.pressedWithin(e.c.rt.pressed.id, e)
+}
+
 // pressedWithin reports whether element id of the last frame is e, inside it,
 // the element e is attached to, or in an overlay attached to one of them.
 func (rt *engine) pressedWithin(id uint64, e *node) bool {

@@ -7302,6 +7302,24 @@ func (_handle Element) PressedPointer() (PointerType, float32, bool) {
 	return _node.PressedPointer()
 }
 
+// PressedWithin reports whether the pointer is held down now on the
+// element, on an element inside it, or in a popover attached to one of
+// them, wherever the pointer has moved since: a slider of a bar dragged
+// off the bar keeps it pressed within the bar, which may stay shown till
+// it is let go of. PressedInside tells that a press went down there since
+// the last frame; PressedWithin that one is held there, as FocusWithin
+// tells where the focus is. Unlike Pressed it does not make the element a
+// control, and a press on a scroll bar is not one.
+func (_handle Element) PressedWithin() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.PressedWithin()
+}
+
 // Pretty keeps the last line of each paragraph of the element's text from
 // holding a single word, as CSS's text-wrap: pretty does at least: the
 // line before gives it a word, and the lines before stay as they are. A
