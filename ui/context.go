@@ -934,6 +934,7 @@ type state struct {
 	dragValue    any
 	dragFn       func() any
 	accepts      func(any) bool
+	dropEffect   func(any, transfer.Offer) transfer.Operation
 	droppedValue any
 	hasDropped   bool
 	dropX, dropY float32
@@ -1028,7 +1029,7 @@ func (rt *engine) lookState(id uint64) (s *state, built bool) {
 	s.seen, s.pass = rt.frame, rt.pass
 	s.hoverBuilt = false
 	// What the element drags and takes, as this pass asks.
-	s.dragValue, s.dragFn, s.accepts = nil, nil, nil
+	s.dragValue, s.dragFn, s.accepts, s.dropEffect = nil, nil, nil, nil
 	s.dataSource, s.dataTarget = nil, nil
 	return s, built
 }

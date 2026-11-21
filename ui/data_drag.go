@@ -78,8 +78,9 @@ func (rt *engine) dataTargetAt(x, y float32, d *platform.DataDragEvent) *state {
 			continue
 		}
 		if s.accepts != nil && d.Local != nil && s.accepts(d.Local) {
-			d.Operation = transfer.Negotiate(d.Offer.Operations, transfer.Copy, d.Offer.Suggested)
-			if d.Operation != transfer.None {
+			// DropEffect None: not taken here; elements around may.
+			if op, ok := s.localEffect(d); ok && op != transfer.None {
+				d.Operation = op
 				return s
 			}
 		}

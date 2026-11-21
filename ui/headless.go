@@ -90,6 +90,9 @@ type headless struct {
 	dragData    transfer.Data
 	dragLocal   any
 	dragOptions transfer.DragOptions
+	// dragOp is the effect the window answered the last native drag
+	// (Tester.DragOperation).
+	dragOp transfer.Operation
 	// dragPreview is the drag's preview, as its source gave it or as
 	// ScaleDataDrag changed it since, with its point under the pointer.
 	dragPreview image.Image
@@ -1084,7 +1087,35 @@ func (t *Tester) DragDataOver(x, y float32, offer transfer.Offer) bool {
 	if offer.Operations == transfer.None {
 		offer.Operations = transfer.Copy
 	}
-	return t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDragOver, X: float64(x), Y: float64(y), Drag: &platform.DataDragEvent{Offer: offer}})
+	return t.sendDrag(platform.SurfaceEvent{Kind: platform.DataDragOver, X: float64(x), Y: float64(y), Drag: &platform.DataDragEvent{Offer: offer}})
+}
+
+// sendDrag sends a native drag's event and notes the effect the window
+// answered (DragOperation).
+func (t *Tester) sendDrag(ev platform.SurfaceEvent) bool {
+	taken := t.sendTaken(ev)
+	t.h.dragOp = transfer.None
+	if taken {
+		t.h.dragOp = ev.Drag.Operation
+	}
+	return taken
+}
+
+// DragOperation is the effect the window answered the last native drag
+// over it or dropped on it (DragDataOver, DropDataAt, DragDraggedDataOver,
+// DropDraggedDataAt): the one the platform shows with the pointer (copy:
+// a plus badge; move: the plain arrow), None where nothing takes it.
+func (t *Tester) DragOperation() transfer.Operation { return t.h.dragOp }
+
+// DraggedOperations is what the drag an element of this window started
+// (DragData) offers other apps, and this process's windows
+// (DragOptions.Local), as the platform offers them.
+func (t *Tester) DraggedOperations() (other, local transfer.Operation) {
+	o := t.h.dragOptions
+	if o.Done == nil {
+		return transfer.None, transfer.None
+	}
+	return o.Operations.Allowed(), o.LocalOperations()
 }
 
 // DragDataLeave takes the drag DragDataOver brought out of the window.
@@ -1104,7 +1135,7 @@ func (t *Tester) DropDataAt(x, y float32, data transfer.Data, operations transfe
 	if offer.Operations == transfer.None {
 		offer.Operations = transfer.Copy
 	}
-	return t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDrop, X: float64(x), Y: float64(y), Drag: &platform.DataDragEvent{Offer: offer, Data: data}})
+	return t.sendDrag(platform.SurfaceEvent{Kind: platform.DataDrop, X: float64(x), Y: float64(y), Drag: &platform.DataDragEvent{Offer: offer, Data: data}})
 }
 
 // DraggedData is what an element's DragData gave the drag it started
@@ -1131,7 +1162,7 @@ func (t *Tester) DragDraggedDataOver(x, y float32, suggested transfer.Operation)
 	if !ok {
 		return false
 	}
-	return t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDragOver, X: float64(x), Y: float64(y), Drag: ev})
+	return t.sendDrag(platform.SurfaceEvent{Kind: platform.DataDragOver, X: float64(x), Y: float64(y), Drag: ev})
 }
 
 // DropDraggedDataAt drops the drag an element of this window started at
@@ -1144,7 +1175,7 @@ func (t *Tester) DropDraggedDataAt(x, y float32, suggested transfer.Operation) b
 		return false
 	}
 	ev, _ := t.draggedEvent(suggested)
-	taken := t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDrop, X: float64(x), Y: float64(y), Drag: ev})
+	taken := t.sendDrag(platform.SurfaceEvent{Kind: platform.DataDrop, X: float64(x), Y: float64(y), Drag: ev})
 	if !taken {
 		t.FinishDataDrag(transfer.Result{Canceled: true})
 		return false
@@ -1159,7 +1190,8 @@ func (t *Tester) draggedEvent(suggested transfer.Operation) (*platform.DataDragE
 	if h.dragOptions.Done == nil {
 		return nil, false
 	}
-	offer := transfer.Offer{Formats: h.dragData.Formats(), Operations: h.dragOptions.Operations.Allowed(), Suggested: suggested}
+	// A drag of this process: what the source offers its windows.
+	offer := transfer.Offer{Formats: h.dragData.Formats(), Operations: h.dragOptions.LocalOperations(), Suggested: suggested}
 	return &platform.DataDragEvent{Offer: offer, Session: "tester", Local: h.dragLocal, Data: h.dragData, Resolved: true}, true
 }
 

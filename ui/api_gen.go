@@ -5079,6 +5079,34 @@ func (_handle Element) DrawOver(fn func(p *Painter, r Rect)) Element {
 	return wrapElement(_node.DrawOver(fn))
 }
 
+// DropEffect tells what a native drag of this process's value over e
+// (Drop, DragOver: a value DragData's source also drags) would do there,
+// which the platform shows with the pointer (copy: a plus badge; move: the
+// plain arrow) and tells the drag's source as it is let go: effect is
+// given the value and the drag's offer (its operations, and the one the
+// keys held suggest — Option a copy) as the drag moves, on the main
+// thread. Without it the effect is a copy, or what the keys ask for. An
+// effect the source does not offer (DragOptions.Local) falls back to a
+// copy. None: e does not take that value, as Drop's type did not match —
+// the drag goes on to its DropData and the elements around it.
+//
+//	ui.Drop[*Items](folder)
+//	folder.DropEffect(func(v any, o transfer.Offer) transfer.Operation {
+//		if o.Suggested == transfer.Copy {
+//			return transfer.Copy // Option: added
+//		}
+//		return transfer.Move
+//	})
+func (_handle Element) DropEffect(effect func(value any, offer transfer.Offer) transfer.Operation) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.DropEffect(effect))
+}
+
 // DroppedFiles returns the paths of the files dropped on the element since
 // the last frame, nil when none, and makes the element take files dragged
 // over it.

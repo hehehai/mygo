@@ -49,7 +49,10 @@ func registerDataDragClasses() {
 	classDef("MyGoDragSource", "NSObject", []string{"NSDraggingSource"}, []objc.MethodDef{
 		method("draggingSession:sourceOperationMaskForDraggingContext:", func(self id, _ objc.SEL, session id, context int) uint {
 			if src := macDragSources[self]; src != nil {
-				return macOperations(src.r.Operations)
+				// NSDraggingContextWithinApplication (1): this process's
+				// windows; outside (0), Finder and other apps never get
+				// more than Operations.
+				return macOperations(src.r.OperationsFor(context == 1))
 			}
 			return 0
 		}),

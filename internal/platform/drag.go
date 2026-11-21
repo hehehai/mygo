@@ -10,13 +10,28 @@ const DragSessionFormat transfer.Format = "application/x-mygo-drag-session"
 // gesture. Done must be called exactly once on the main thread. Windows
 // may run a native nested event loop; other backends return immediately.
 type DragRequest struct {
-	Data                      transfer.Data
-	Operations                transfer.Operation
+	Data       transfer.Data
+	Operations transfer.Operation
+	// LocalOperations is what the drag offers this process's windows
+	// (DragOptions.Local; none: Operations), where the platform tells
+	// them from other apps' (macOS: the dragging context).
+	LocalOperations           transfer.Operation
 	Session                   string
 	X, Y                      float64
 	Preview                   []byte // premultiplied BGRA, one pixel per DIP
 	Width, Height, HotX, HotY int
 	Done                      func(transfer.Result)
+}
+
+// OperationsFor is what the drag offers a destination of this process
+// (local) or of another app: another app never gets more than
+// Operations, so a file is not moved away from a source that offers its
+// own windows a move.
+func (r DragRequest) OperationsFor(local bool) transfer.Operation {
+	if local && r.LocalOperations != transfer.None {
+		return r.LocalOperations
+	}
+	return r.Operations
 }
 
 // DataDragEvent is a synchronous destination query. The core resolves

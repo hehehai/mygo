@@ -71,9 +71,10 @@ func (w *Window) startDataDragPrepared(data transfer.Data, local any, options Dr
 	if operations == transfer.None {
 		return errors.New("mygo: no supported drag operation")
 	}
-	src := &dataSource{w: w, token: randomText(), data: data.Snapshot(), local: local, done: options.Done, operations: operations}
+	inApp := options.LocalOperations()
+	src := &dataSource{w: w, token: randomText(), data: data.Snapshot(), local: local, done: options.Done, operations: operations | inApp}
 	activeDataDrag = src
-	req := platform.DragRequest{Data: src.data, Session: src.token, Operations: operations,
+	req := platform.DragRequest{Data: src.data, Session: src.token, Operations: operations, LocalOperations: inApp,
 		X: x, Y: y, Preview: pix, Width: width, Height: height,
 		HotX: options.Hotspot.X, HotY: options.Hotspot.Y, Done: src.finish}
 	// OLE tracks in a nested event loop. Enter it after the input callback
