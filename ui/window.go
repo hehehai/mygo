@@ -858,6 +858,14 @@ func (h *windowHost) textSystem() *text.System { return text.Shared() }
 
 func (h *windowHost) setCursor(c Cursor) { h.conn.Surface.SetCursor(platform.Cursor(c)) }
 
+func (h *windowHost) setCursorImage(c *ImageCursor) {
+	if s, ok := h.conn.Surface.(platform.ImageCursorSurface); ok {
+		s.SetCursorImage(&c.c)
+		return
+	}
+	h.conn.Surface.SetCursor(platform.CursorDefault)
+}
+
 func (h *windowHost) setTextInput(t platform.TextInputState) { h.conn.Surface.SetTextInput(t) }
 
 func (h *windowHost) updateAccessibility(tree *platform.AccessTree) {

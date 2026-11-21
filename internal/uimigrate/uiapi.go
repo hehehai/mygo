@@ -191,6 +191,7 @@ var elementChains = map[string]bool{
 	"CopyData":             true,
 	"Current":              true,
 	"Cursor":               true,
+	"CursorImage":          true,
 	"Debug":                true,
 	"DecorationColor":      true,
 	"DecorationThickness":  true,

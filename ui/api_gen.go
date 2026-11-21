@@ -1745,7 +1745,9 @@ func Local[T any](e Element, key any, init func() T) *T {
 // Right opens a submenu and Left closes it, the other way round right to
 // left (Direction); Enter and Space choose an item, Escape closes the
 // submenu on top, and Tab and a press outside the menu close it. The
-// pointer highlights the item it moves onto, opening its submenu.
+// pointer highlights the item it moves onto, opening its submenu, but for
+// those it crosses heading for a submenu that shows, which stays open
+// until the pointer rests on one of them (menuAimGrace).
 // Assistive technology sees a menu button, expanded while its menu shows,
 // and a menu of items, check box items and radio items. PopoverMenuButton
 // draws its menu with these parts, in the theme's look.
@@ -4651,6 +4653,20 @@ func (_handle Element) Cursor(c Cursor) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Cursor(c))
+}
+
+// CursorImage shows c as the pointer over the element, as Cursor shows a
+// shape, picked as Cursor is (the innermost element under the pointer that
+// sets one). Where the platform has no pictures for pointers (all but
+// macOS), the default pointer shows. nil sets none.
+func (_handle Element) CursorImage(c *ImageCursor) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.CursorImage(c))
 }
 
 // Debug outlines the element and every element inside it, with their

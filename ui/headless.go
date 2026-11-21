@@ -39,6 +39,7 @@ type headless struct {
 	// clipboardData is what WriteClipboardData copied, with its formats.
 	clipboardData transfer.Data
 	cursor        Cursor
+	cursorImg     *ImageCursor
 	ime           platform.TextInputState
 	opened        []string
 	// escapes counts the Escapes nothing handled.
@@ -134,7 +135,8 @@ func (h *headless) afterTimer(at time.Time) {
 func (h *headless) framePath() string                          { return "drawn in memory" }
 func (h *headless) requestFrame()                              { h.requested.Store(true) }
 func (h *headless) repaintTimer(at time.Time)                  { h.repaintAt = at }
-func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
+func (h *headless) setCursor(c Cursor)                         { h.cursor, h.cursorImg = c, nil }
+func (h *headless) setCursorImage(c *ImageCursor)              { h.cursor, h.cursorImg = cursorImage, c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
 func (h *headless) startDrag()                                 {}
@@ -1220,6 +1222,10 @@ func (t *Tester) SetClipboardData(d transfer.Data) {
 
 // Cursor returns the pointer shape the view shows.
 func (t *Tester) Cursor() Cursor { return t.h.cursor }
+
+// CursorImage returns the picture shown as the pointer
+// (Element.CursorImage), nil while a shape is (Cursor).
+func (t *Tester) CursorImage() *ImageCursor { return t.h.cursorImg }
 
 // OpenedURLs returns the links the view opened.
 func (t *Tester) OpenedURLs() []string { return t.h.opened }

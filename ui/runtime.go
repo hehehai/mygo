@@ -38,6 +38,8 @@ type host interface {
 	afterTimer(at time.Time)
 	repaintTimer(at time.Time)
 	setCursor(Cursor)
+	// setCursorImage shows a picture as the pointer (Element.CursorImage).
+	setCursorImage(c *ImageCursor)
 	setTextInput(t platform.TextInputState)
 	updateAccessibility(tree *platform.AccessTree)
 	readClipboard() string
@@ -534,6 +536,7 @@ type engine struct {
 	wakeMu    sync.Mutex
 	wakeAt    time.Time
 	cursor    Cursor
+	cursorImg *ImageCursor // shown while cursor is cursorImage
 	// ime is the text input state the host has, and base the rune of the
 	// focused editor its text starts at.
 	// bouncing lists the containers springing back from past their ends, and
@@ -1706,7 +1709,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	if d := e.activeDescendant; d != nil {
 		s.activeDescendant = d.id
 	}
-	s.cursor, s.tip = e.cursor, e.tip
+	s.cursor, s.cursorImg, s.tip = e.cursor, e.cursorImg, e.tip
 	s.webView = e.webView
 	s.role, s.focusHighlights = e.role, e.focusHighlights
 	s.input, s.caret, s.takesText, s.noIME = e.inputFn, e.caret, e.takesText, e.noIME
@@ -1927,10 +1930,11 @@ func (rt *engine) updateCursor() {
 		return
 	}
 	c := CursorDefault
+	var img *ImageCursor
 	switch {
 	case rt.scrollDrag.st != nil:
 	case rt.pressed != nil && rt.pressed.cursor != 0:
-		c = rt.pressed.cursor - 1
+		c, img = rt.pressed.cursor-1, rt.pressed.cursorImg
 	case slices.ContainsFunc(rt.hover, rt.overScrollbar):
 		// The bar takes presses before what is under it (scrollbarPress).
 	default:
@@ -1940,7 +1944,7 @@ func (rt *engine) updateCursor() {
 				continue
 			}
 			if s.cursor != 0 {
-				c = s.cursor - 1
+				c, img = s.cursor-1, s.cursorImg
 				break
 			}
 			if s.flags&flagClickable != 0 {
@@ -1948,9 +1952,16 @@ func (rt *engine) updateCursor() {
 			}
 		}
 	}
-	if c != rt.cursor {
-		rt.cursor = c
-		rt.host.setCursor(c)
+	if c == cursorImage && img == nil {
+		c = CursorDefault
+	}
+	if c != rt.cursor || c == cursorImage && img != rt.cursorImg {
+		rt.cursor, rt.cursorImg = c, img
+		if c == cursorImage {
+			rt.host.setCursorImage(img)
+		} else {
+			rt.host.setCursor(c)
+		}
 	}
 }
 

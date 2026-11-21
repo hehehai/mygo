@@ -772,6 +772,7 @@ type state struct {
 	// this one does (ActiveDescendant), 0 for none.
 	activeDescendant uint64
 	cursor           Cursor
+	cursorImg        *ImageCursor
 	// tip marks an element with a tooltip (TooltipBase), which shows once
 	// the pointer has rested on it for tipDelay, or at once within tipWarm
 	// of another going: its theme's TooltipDelay.
