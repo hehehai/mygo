@@ -1656,6 +1656,15 @@ type TabsHandler interface {
 	TabSelected(i int)
 }
 
+// NavigationFilter is a WindowHandler that may decide navigations itself,
+// later: FilterNavigation returns false when it does not (WillNavigate
+// decides, as before), else true and calls decide once, from any
+// goroutine; the backend then asks WillNavigate on the main thread when
+// it allows.
+type NavigationFilter interface {
+	FilterNavigation(nav Navigation, decide func(allow bool)) bool
+}
+
 // NavigationHandler is a WindowHandler told that the user popped its
 // window off its stack (the back button, a swipe, Android's back).
 type NavigationHandler interface {

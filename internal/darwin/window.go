@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ebitengine/purego/objc"
 
@@ -2618,6 +2619,31 @@ func registerWindowClasses() {
 					if nav.IsMainFrame && w.programmatic {
 						w.programmatic = false
 						nav.Unasked = true
+					}
+					if f, ok := w.h.(platform.NavigationFilter); ok {
+						// The filter decides, now or later: the handler is
+						// kept until it does.
+						held := blockCopy(handler)
+						var once sync.Once
+						if f.FilterNavigation(nav, func(ok bool) {
+							once.Do(func() {
+								b().runOnMain(func() {
+									if w.closed {
+										ok = false
+									} else if ok {
+										ok = w.h.WillNavigate(nav)
+										if ok && nav.IsMainFrame {
+											w.leavingPage()
+										}
+									}
+									callBlock(held, boolArg(ok))
+									blockRelease(held)
+								})
+							})
+						}) {
+							return
+						}
+						blockRelease(held)
 					}
 					allow = w.h.WillNavigate(nav)
 					if allow && nav.IsMainFrame {

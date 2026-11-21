@@ -46,6 +46,19 @@ type NavigateEvent struct {
 	UserInitiated bool
 }
 
+// NavigationRequest is a navigation a page's navigation filter decides
+// (Page.SetNavigationFilter).
+type NavigationRequest struct {
+	URL string
+	// MainFrame: the page's own document; else a frame's in it.
+	MainFrame bool
+	// UserInitiated: a link clicked or a form sent by the user.
+	UserInitiated bool
+	// Unasked: one OnWillNavigate is not asked about: a load the app
+	// started, a reload, a history navigation.
+	Unasked bool
+}
+
 // TitleEvent is passed to Page.OnPageTitleUpdated listeners. Preventing
 // it keeps the native window title unchanged.
 type TitleEvent struct {

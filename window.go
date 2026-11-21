@@ -414,6 +414,7 @@ type Window struct {
 	mu                 sync.Mutex
 	openHandler        func(WindowOpenRequest) *WindowOptions
 	permissionHandler  func(PermissionRequest) bool
+	navigationFilter   func(NavigationRequest, func(allow bool))
 	authHandler        func(AuthRequest) AuthResponse
 	certificateHandler func(CertificateError) bool
 	clientCertHandler  func(ClientCertificateRequest) ClientCertificateResponse
@@ -2180,6 +2181,24 @@ func (p *Page) OnWillNavigate(fn func(e *NavigateEvent)) (off func()) {
 	return p.w.onWillNavigate.add(fn, false)
 }
 
+// SetNavigationFilter has fn decide every navigation of the page before
+// it starts: the main frame's and every frame's in it, the loads the app
+// starts (LoadURL), redirects, reloads and history navigations, and the
+// page's own (links, scripts, forms, <meta http-equiv="refresh">);
+// OnWillNavigate's too, which comes after it for those the filter allows.
+// fn runs on the main thread and must call decide exactly once: at once,
+// or later from any goroutine (a check that resolves a host name should
+// not hold the main thread); until then the navigation waits. nil removes
+// the filter. It keeps a page the app does not trust off addresses
+// (the user's machine, the local network), with content rules
+// (CompileContentRules) for what the page loads that is not a
+// navigation. Only macOS has it; elsewhere the filter is never asked.
+func (p *Page) SetNavigationFilter(fn func(nav NavigationRequest, decide func(allow bool))) {
+	p.w.mu.Lock()
+	p.w.navigationFilter = fn
+	p.w.mu.Unlock()
+}
+
 // OnDidNavigate is called when a navigation committed and a new page
 // started.
 func (p *Page) OnDidNavigate(fn func(url string)) (off func()) {
@@ -2319,6 +2338,19 @@ func (h *windowHandler) TitleBarChanged() {
 }
 
 func (h *windowHandler) Message(msg string) { h.w.handleMessage(msg) }
+
+// FilterNavigation hands nav to the page's navigation filter
+// (platform.NavigationFilter); false: the page has none.
+func (h *windowHandler) FilterNavigation(nav platform.Navigation, decide func(allow bool)) bool {
+	h.w.mu.Lock()
+	fn := h.w.navigationFilter
+	h.w.mu.Unlock()
+	if fn == nil {
+		return false
+	}
+	fn(NavigationRequest{URL: nav.URL, MainFrame: nav.IsMainFrame, UserInitiated: nav.UserInitiated, Unasked: nav.Unasked}, decide)
+	return true
+}
 
 func (h *windowHandler) WillNavigate(nav platform.Navigation) bool {
 	if doc := h.w.html; nav.IsMainFrame && nav.Reload && doc != nil && doc.shown {

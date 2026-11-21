@@ -483,6 +483,52 @@ func TestWillNavigate(t *testing.T) {
 	check(platform.Navigation{URL: "https://blocked.example", IsMainFrame: true, Unasked: true}, true)
 }
 
+// TestNavigationFilter: a page's filter is asked about every navigation,
+// frames' and unasked ones too, and may decide later.
+func TestNavigationFilter(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{})
+	f, ok := fw.H.(platform.NavigationFilter)
+	if !ok {
+		t.Fatal("the window's handler is no NavigationFilter")
+	}
+	ask := func(nav platform.Navigation) (filtered bool, allowed chan bool) {
+		allowed = make(chan bool, 2)
+		filtered = onMainValue(func() bool { return f.FilterNavigation(nav, func(ok bool) { allowed <- ok }) })
+		return
+	}
+	if filtered, _ := ask(platform.Navigation{URL: "https://x.example", IsMainFrame: true}); filtered {
+		t.Error("filtered without a filter")
+	}
+	var seen []NavigationRequest
+	w.Page().SetNavigationFilter(func(nav NavigationRequest, decide func(bool)) {
+		seen = append(seen, nav)
+		go decide(!strings.Contains(nav.URL, "10.0.0.1"))
+	})
+	for _, c := range []struct {
+		nav  platform.Navigation
+		want bool
+	}{
+		{platform.Navigation{URL: "https://ok.example", IsMainFrame: true, Unasked: true}, true},
+		{platform.Navigation{URL: "http://10.0.0.1/", IsMainFrame: false}, false},
+		{platform.Navigation{URL: "http://10.0.0.1/", IsMainFrame: true, Unasked: true}, false},
+	} {
+		filtered, allowed := ask(c.nav)
+		if !filtered {
+			t.Fatalf("%+v not filtered", c.nav)
+		}
+		if got := <-allowed; got != c.want {
+			t.Errorf("%+v: allowed %v", c.nav, got)
+		}
+	}
+	if len(seen) != 3 || seen[1].MainFrame || !seen[2].Unasked {
+		t.Errorf("seen %+v", seen)
+	}
+	w.Page().SetNavigationFilter(nil)
+	if filtered, _ := ask(platform.Navigation{URL: "http://10.0.0.1/", IsMainFrame: true}); filtered {
+		t.Error("filtered after the filter was removed")
+	}
+}
+
 // TestUserInitiated checks that whether a user's gesture opened a window
 // or navigated reaches the window open handler and OnWillNavigate, which
 // can refuse what a page's script did on its own.
