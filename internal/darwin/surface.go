@@ -840,12 +840,23 @@ func scrollWheel(s *surface, ev id) {
 	x, y := s.location(ev)
 	dx, dy := msgFloat(ev, sel("scrollingDeltaX")), msgFloat(ev, sel("scrollingDeltaY"))
 	precise := sendBool(ev, "hasPreciseScrollingDeltas")
-	momentum := sendInt(ev, "momentumPhase") != 0
+	m := uint(sendInt(ev, "momentumPhase"))
+	momentum := m != 0
 	if !precise {
 		// A mouse wheel scrolls by lines: 40 DIPs, as in browsers.
 		dx, dy = dx*40, dy*40
 	}
-	s.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: x, Y: y, DX: -dx, DY: -dy, Precise: precise, Momentum: momentum, Mods: eventMods(ev)})
+	e := platform.SurfaceEvent{Kind: platform.PointerScroll, X: x, Y: y, DX: -dx, DY: -dy, Precise: precise, Momentum: momentum, Mods: eventMods(ev)}
+	if precise {
+		// A touchpad's gesture: where the fingers start and lift, and the
+		// glide after them its own phases.
+		if momentum {
+			e.Phase = gesturePhase(m)
+		} else {
+			e.Phase = gesturePhase(uint(sendInt(ev, "phase")))
+		}
+	}
+	s.send(e)
 }
 
 func eventMods(ev id) platform.Modifiers {
@@ -1383,12 +1394,20 @@ func registerSurfaceClass() {
 			if s == nil {
 				return
 			}
-			// A swipe goes back and forward, as the side buttons do: the
+			// The content's elements may take it (InputSwipe), as a viewer
+			// paging through pictures; AppKit's deltaX is 1 when the
+			// fingers moved right (back): forward is DX 1.
+			x, y := s.location(ev)
+			dx, dy := msgFloat(ev, sel("deltaX")), msgFloat(ev, sel("deltaY"))
+			mods := eventMods(ev)
+			if s.send(platform.SurfaceEvent{Kind: platform.PointerSwipe, X: x, Y: y, DX: -dx, DY: dy, Mods: mods}) {
+				return
+			}
+			// Else it goes back and forward, as the side buttons do: the
 			// buttons of mice whose makers' software sends swipes for
 			// them, as Logi Options+ does, and touchpads set to swipe
 			// between pages.
-			if back, ok := swipeBack(msgFloat(ev, sel("deltaX"))); ok {
-				mods := eventMods(ev)
+			if back, ok := swipeBack(dx); ok {
 				s.sideButton(platform.PointerDown, back, mods)
 				s.sideButton(platform.PointerUp, back, mods)
 			}

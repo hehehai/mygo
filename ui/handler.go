@@ -82,6 +82,15 @@ const (
 	// does not tell (GestureNone), each event goes to the element under
 	// the pointer that handles its input.
 	InputZoom
+	// InputSwipe is a touchpad's swipe at X, Y (macOS: three fingers, or
+	// two where the system's "Swipe between pages" takes them so): DX 1
+	// when the fingers moved left (forward: the next page), -1 right
+	// (back); DY 1 up, -1 down. The innermost element under the pointer
+	// that takes it has it, else the element with the keyboard focus; a
+	// sideways one no element takes goes back or forward as before
+	// (KeyBack, KeyForward). A two-finger swipe between pages comes as
+	// InputScroll with Phase (see there).
+	InputSwipe
 )
 
 // GesturePhase is where a touchpad's gesture is (InputEvent.Phase).
@@ -158,8 +167,13 @@ type InputEvent struct {
 	// Scale is what InputZoom zooms by, and Rotation the radians clockwise
 	// two fingers turned, on touch screens.
 	Scale, Rotation float32
-	// Phase is where the touchpad's gesture of an InputZoom is (macOS),
-	// GestureNone where the platform does not tell.
+	// Phase is where the touchpad's gesture of an InputZoom or an
+	// InputScroll is (macOS), GestureNone where the platform does not
+	// tell, as for a mouse wheel: a scroll's GestureBegan as two fingers
+	// start moving, GestureEnded as they lift, and the glide after them
+	// (Momentum) its own GestureBegan to GestureEnded. An element that
+	// pages by swiping (a viewer) adds up a gesture's DX from GestureBegan
+	// to GestureEnded and ignores the glide.
 	Phase GesturePhase
 	// Start and End are the runes InputSelect selects.
 	Start, End int

@@ -84,7 +84,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		}
 	}
 	switch ev.Kind {
-	case platform.PointerMove, platform.PointerDown, platform.PointerUp, platform.PointerScroll, platform.PointerZoom:
+	case platform.PointerMove, platform.PointerDown, platform.PointerUp, platform.PointerScroll, platform.PointerZoom, platform.PointerSwipe:
 		rt.mods = Modifiers(ev.Mods)
 	}
 	switch ev.Kind {
@@ -135,7 +135,10 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		}
 	case platform.PointerScroll:
 		rt.pointerMove(x, y)
-		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise, ev.Momentum)
+		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise, ev.Momentum, GesturePhase(ev.Phase))
+	case platform.PointerSwipe:
+		rt.pointerMove(x, y)
+		taken = rt.swipe(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods))
 	case platform.PointerZoom:
 		rt.pointerMove(x, y)
 		rt.zoom(float32(ev.Scale), float32(ev.Rotation), GesturePhase(ev.Phase), Modifiers(ev.Mods))
@@ -903,7 +906,7 @@ func (s *state) quietClick(mods Modifiers) {
 	s.click(mods)
 }
 
-func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool) {
+func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool, phase GesturePhase) {
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
 	rt.chain = chain[:0]
 	// From the innermost element out, the first handling its input to
@@ -912,7 +915,7 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool)
 	// scrolls under what it shows over its text. Scroll containers move
 	// only when no handler takes it, so a handler around one, as a canvas
 	// that zooms with Ctrl and the wheel, still sees it first.
-	ev := InputEvent{Kind: InputScroll, DX: dx, DY: dy, Mods: mods, Precise: precise, Momentum: momentum}
+	ev := InputEvent{Kind: InputScroll, DX: dx, DY: dy, Mods: mods, Precise: precise, Momentum: momentum, Phase: phase}
 	for _, id := range chain {
 		if s := rt.states[id]; s != nil && s.input != nil && s.flags&flagDisabled == 0 && rt.deliver(s, ev) {
 			return
@@ -963,6 +966,21 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool)
 			return
 		}
 	}
+}
+
+// swipe gives a swipe to the innermost element under the pointer that
+// takes it, else to the element with the keyboard focus, and reports
+// whether one took it.
+func (rt *engine) swipe(dx, dy float32, mods Modifiers) bool {
+	ev := InputEvent{Kind: InputSwipe, DX: dx, DY: dy, Mods: mods}
+	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
+	rt.chain = chain[:0]
+	for _, id := range chain {
+		if s := rt.states[id]; s != nil && s.input != nil && s.flags&flagDisabled == 0 && rt.deliver(s, ev) {
+			return true
+		}
+	}
+	return rt.deliver(rt.focusHandler(), ev)
 }
 
 // zoom gives a pinch to the element under the pointer that handles its

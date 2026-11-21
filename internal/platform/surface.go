@@ -574,6 +574,13 @@ const (
 	// lands, and leaves one that does to the system's mouse, whose press
 	// moves the window (Windows).
 	DragRegionAt
+	// PointerSwipe reports a touchpad's swipe at X, Y (macOS
+	// swipeWithEvent:: three fingers, or two where the system's "Swipe
+	// between pages" takes them so): DX 1 when the fingers moved left
+	// (forward: the next page), -1 right (back); DY 1 up, -1 down. The
+	// content reports whether it took it; macOS goes back or forward
+	// (KeyBack, KeyForward) with a sideways one it did not.
+	PointerSwipe
 )
 
 // GesturePhase is where a touchpad's gesture is, for the backends that

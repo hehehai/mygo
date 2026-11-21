@@ -1041,6 +1041,23 @@ func (t *Tester) PinchGesture(x, y float32, scales ...float32) {
 	t.Zoom(x, y, GestureEnded, 1)
 }
 
+// ScrollGesture scrolls as a touchpad's two fingers do at (x, y): an
+// event of a gesture's phase, of the glide after the fingers lifted
+// (momentum) or not (InputEvent.Phase).
+func (t *Tester) ScrollGesture(x, y, dx, dy float32, phase GesturePhase, momentum bool) {
+	t.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: float64(x), Y: float64(y), DX: float64(dx), DY: float64(dy),
+		Precise: true, Phase: platform.GesturePhase(phase), Momentum: momentum})
+}
+
+// Swipe swipes a touchpad at (x, y) (InputSwipe): dx 1 to the next page
+// (the fingers moved left), -1 back; dy 1 up, -1 down. It reports whether
+// an element took it.
+func (t *Tester) Swipe(x, y, dx, dy float32) bool {
+	taken := t.rt.event(platform.SurfaceEvent{Kind: platform.PointerSwipe, X: float64(x), Y: float64(y), DX: float64(dx), DY: float64(dy)})
+	t.settle()
+	return taken
+}
+
 // SmartZoom taps a touchpad twice with two fingers at (x, y) (smart
 // zoom): one InputZoom of phase GestureSmart.
 func (t *Tester) SmartZoom(x, y float32) {
