@@ -361,6 +361,9 @@ type texture struct {
 	// gpu marks an image's texture that its GPUSource gave, which shows
 	// memory of its own (an IOSurface): never one to upload pixels into.
 	gpu bool
+	// bytes is what an image's texture of its pixels counts against the
+	// budget (ui.SetTextureBudget), 0 for others.
+	bytes int64
 }
 
 // drawState is what drawing scenes into a target keeps from frame to
@@ -474,6 +477,8 @@ type Renderer struct {
 	empty  id // a texture to bind where there is none
 	images map[uint64]*texture
 	video  videoState
+	// img bounds the images' textures (budget.go).
+	img budgetState
 	// canvases are the textures canvases are drawn into.
 	canvases map[uint64]*canvasTexture
 	// blurred are the textures of the images the frame draws blurred
@@ -1079,30 +1084,34 @@ func (r *Renderer) imageTexture(img *scene.Image) uintptr {
 	}
 	if t == nil {
 		pix := img.Pixels()
-		if pix == nil {
-			return 0
+		if pix == nil || !r.admit(img) {
+			return 0 // left out: drawn by a later frame (budget.go)
 		}
-		tex := r.newTexture(img.W, img.H, pixelFormatRGBA8Unorm, usageShaderRead, pix, img.W*4)
+		tex := r.upload(img.W, img.H, pix)
 		if tex == 0 {
 			return 0
 		}
 		t = &texture{tex: tex, w: img.W, h: img.H, ver: img.Version()}
 		r.images[img.ID()] = t
+		r.count(t, imageBytes(img.W, img.H))
 		img.Uploaded()
 	} else if t.w != img.W || t.h != img.H {
 		if pix := img.Pixels(); pix != nil {
-			tex := r.newTexture(img.W, img.H, pixelFormatRGBA8Unorm, usageShaderRead, pix, img.W*4)
+			tex := r.upload(img.W, img.H, pix)
 			if tex == 0 {
 				return 0
 			}
 			release(&t.tex)
 			t.tex, t.w, t.h, t.ver = tex, img.W, img.H, img.Version()
+			r.count(t, imageBytes(img.W, img.H))
 			img.Uploaded()
 		}
 	} else if t.ver != img.Version() {
 		if pix := img.Pixels(); pix != nil {
 			r.waitLast() // frames in flight read this texture
-			msgReplaceRegion(t.tex, sel("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"), mtlRegion{W: uint(img.W), H: uint(img.H), D: 1}, 0, unsafe.Pointer(&pix[0]), uint(img.W*4))
+			r.timeUpload(len(pix), func() {
+				msgReplaceRegion(t.tex, sel("replaceRegion:mipmapLevel:withBytes:bytesPerRow:"), mtlRegion{W: uint(img.W), H: uint(img.H), D: 1}, 0, unsafe.Pointer(&pix[0]), uint(img.W*4))
+			})
 			t.ver = img.Version()
 			img.Uploaded()
 		}
@@ -1130,6 +1139,7 @@ func (r *Renderer) gpuTexture(img *scene.Image) uintptr {
 	} else {
 		// The previous frame's, or a texture of its pixels.
 		release(&t.tex)
+		r.count(t, 0)
 	}
 	t.tex, t.w, t.h, t.ver, t.lastFrame, t.gpu = tex, img.W, img.H, img.Version(), r.frame, true
 	return t.tex
@@ -1206,6 +1216,7 @@ func (r *Renderer) prepare(s *scene.Scene) (cb id, built *scene.Scene, err error
 		return 0, nil, r.err
 	}
 	r.frame++
+	r.beginBudget()
 	if err := r.syncAtlas(&r.mask, s.MaskAtlas, pixelFormatR8Unorm); err != nil {
 		return 0, nil, err
 	}
@@ -1274,7 +1285,11 @@ func (r *Renderer) drawCanvas(cb id, c *scene.Image) error {
 	t.b.NoCull, t.b.NoShadowSplit, t.b.NoRingSplit, t.b.NoCornerSplit = r.b.NoCull, r.b.NoShadowSplit, r.b.NoRingSplit, r.b.NoCornerSplit
 	t.b.NoClasses, t.b.GeneralClasses = r.b.NoClasses, r.b.GeneralClasses
 	t.b.GeneralFill, t.b.NoClipSkip = r.b.GeneralFill, r.b.NoClipSkip
-	if err := r.drawInto(cb, cs, t.tex, &t.drawState); err != nil {
+	// Drawn once a version: an image the budget left out would stay out.
+	r.img.unbounded = true
+	err := r.drawInto(cb, cs, t.tex, &t.drawState)
+	r.img.unbounded = false
+	if err != nil {
 		return err
 	}
 	t.ver = c.Version()
@@ -1818,6 +1833,8 @@ func (r *Renderer) render(s *scene.Scene) error {
 	}
 	r.diff.Wide = r.wide
 	damage, known := r.diff.Diff(s)
+	// Where the last frame left out images past the budget's uploads.
+	damage, known = r.takeLeftOut(damage, known)
 	if known && len(damage) == 0 && !sync {
 		r.redrew = redrewNothing
 		return nil
@@ -1900,6 +1917,7 @@ func (r *Renderer) drawFrame(s *scene.Scene, damage []image.Rectangle, known boo
 		r.forgetFrames()
 		return 0, err
 	}
+	r.noteLeftOut(s, r.diff.Bounds())
 	damage = r.pipelineDamage(damage, known)
 	r.ages.Add(damage, !known)
 	target := acquire()
@@ -2076,7 +2094,7 @@ func (r *Renderer) trim() {
 	r.pre.drain()
 	pool(func() {
 		r.waitLast()
-		r.releaseTextures()
+		r.releaseIdle()
 		r.ages.Reset()
 		r.diff.Release()
 		tx := class("CATransaction")
@@ -2191,6 +2209,8 @@ const sweepEvery = 120
 // take the second way, and counting only the first, they swept seldom if
 // ever, while each frame's transient canvases piled up on the GPU.
 func (r *Renderer) sweepIfDue() {
+	// Past the budget, the textures of the images drawn longest ago go.
+	r.trimImages()
 	if r.frame-r.swept >= sweepEvery {
 		r.swept = r.frame
 		r.sweep()

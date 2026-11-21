@@ -532,6 +532,7 @@ func (h *windowHost) present(s *scene.Scene) {
 		if h.degraded {
 			h.path = "drawn by the GPU renderer in software"
 		}
+		h.drawLeftOut()
 		return
 	}
 	h.path = "drawn in memory"
@@ -630,6 +631,7 @@ func (h *windowHost) render(s *scene.Scene) bool {
 	for try := 0; h.gpu != nil; try++ {
 		g := h.gpu
 		h.withWindow(g)
+		applyTextureBudget(g)
 		err := g.Render(s)
 		if err == nil {
 			return true

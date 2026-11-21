@@ -208,6 +208,7 @@ func (r *Renderer) stash(s *scene.Scene, damage []image.Rectangle, known bool) e
 		r.forgetFrames()
 		return err
 	}
+	r.noteLeftOut(s, r.diff.Bounds())
 	damage = r.pipelineDamage(damage, known)
 	r.ages.Add(damage, !known)
 	r.pending = pendingFrame{cb: send(cb, "retain"), whole: len(s.Effects) > 0}
