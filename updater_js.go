@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -24,6 +25,9 @@ var Updater = &UpdaterModule{}
 // those for browsers.
 var ErrUpdatesDisabled = errors.New("mygo: updates are not enabled for this build")
 
+// ErrNotPublished says that a feed has no version published.
+var ErrNotPublished = errors.New("no release is published")
+
 // Update is a newer version of the app, found by Updater.Check.
 type Update struct {
 	// Version of the update, and its release notes in Markdown.
@@ -35,6 +39,10 @@ type Update struct {
 
 // Enabled reports whether the app can update itself: not in browsers.
 func (u *UpdaterModule) Enabled() bool { return false }
+
+// Configured reports whether the build links an update feed: never in
+// browsers.
+func (u *UpdaterModule) Configured() bool { return false }
 
 // Check returns ErrUpdatesDisabled.
 func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
@@ -49,6 +57,9 @@ type UpdateSource interface {
 	// Open returns the file at url, which the manifest names.
 	Open(ctx context.Context, url string) (io.ReadCloser, error)
 }
+
+// SetTransport does nothing: browsers do not update apps.
+func (u *UpdaterModule) SetTransport(rt http.RoundTripper) {}
 
 // SetSource does nothing: browsers do not update apps.
 func (u *UpdaterModule) SetSource(s UpdateSource) {}

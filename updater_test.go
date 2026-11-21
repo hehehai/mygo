@@ -9,8 +9,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +66,8 @@ func updateServer(t *testing.T, version, content, deltaFrom string) (srv *httpte
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(archive.Bytes())
-	m = update.Manifest{Version: version, Notes: "- Faster", Date: "2026-09-27T10:00:00Z", Size: int64(archive.Len()), Signature: update.Sign(priv, sum[:])}
+	m = update.Manifest{Version: version, Notes: "- Faster", Date: "2026-09-27T10:00:00Z", Size: int64(archive.Len()), Signature: update.Sign(priv, sum[:]),
+		Release: update.SignRelease(priv, version, "", sum[:])}
 	var mu sync.Mutex
 	counts := map[string]int{}
 	mux := http.NewServeMux()
@@ -87,7 +90,8 @@ func updateServer(t *testing.T, version, content, deltaFrom string) (srv *httpte
 			t.Fatal(err)
 		}
 		sum := sha256.Sum256(delta.Bytes())
-		m.Deltas = []update.Delta{{From: deltaFrom, URL: srv.URL + "/app.delta", Size: int64(delta.Len()), Signature: update.Sign(priv, sum[:])}}
+		m.Deltas = []update.Delta{{From: deltaFrom, URL: srv.URL + "/app.delta", Size: int64(delta.Len()), Signature: update.Sign(priv, sum[:]),
+			Release: update.SignRelease(priv, version, deltaFrom, sum[:])}}
 		mux.HandleFunc("/app.delta", func(w http.ResponseWriter, r *http.Request) { w.Write(delta.Bytes()) })
 	}
 	mux.HandleFunc("/update.json", func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(m) })
@@ -165,6 +169,19 @@ func TestUpdater(t *testing.T) {
 	if _, err := checkUpdate(ctx, feedSource("http://example.com/update.json"), key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Errorf("plain HTTP: %v", err)
 	}
+	// A feed with nothing published yet: up to date, not an error, and so
+	// is a source that says so; other failures stay errors.
+	if up, err := checkUpdate(ctx, feedSource(srv.URL+"/missing/update.json"), key, "1.0.0", false); up != nil || err != nil {
+		t.Errorf("checkUpdate of a feed with no manifest = %+v, %v", up, err)
+	}
+	for _, e := range []error{fmt.Errorf("nothing at %s: %w", srv.URL, fs.ErrNotExist), fmt.Errorf("%w", ErrNotPublished)} {
+		if up, err := checkUpdate(ctx, errSource{e}, key, "1.0.0", false); up != nil || err != nil {
+			t.Errorf("checkUpdate of a source that has nothing (%v) = %+v, %v", e, up, err)
+		}
+	}
+	if _, err := checkUpdate(ctx, errSource{errors.New("offline")}, key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "offline") {
+		t.Errorf("checkUpdate of a failing source: %v", err)
+	}
 
 	target, main := installedApp(t)
 	quit := runningApp(t)
@@ -188,9 +205,25 @@ func TestUpdater(t *testing.T) {
 	// changes nothing.
 	target, main = installedApp(t)
 	bad := up.manifest
-	bad.Signature = base64.StdEncoding.EncodeToString(make([]byte, 64))
+	bad.Release = base64.StdEncoding.EncodeToString(make([]byte, 64))
 	if err := installUpdate(ctx, httpGet, bad, key, up.current, target, nil); err == nil || !strings.Contains(err.Error(), "signed") {
 		t.Errorf("bad signature: %v", err)
+	}
+	// The archive's own signature alone (a manifest of before release
+	// signatures) is not enough: it does not say what version it is.
+	old := up.manifest
+	old.Release = ""
+	if err := installUpdate(ctx, httpGet, old, key, up.current, target, nil); err == nil || !strings.Contains(err.Error(), "signed") {
+		t.Errorf("no release signature: %v", err)
+	}
+	// A signed archive offered as another version (an old one as newer, a
+	// beta as a release) is refused.
+	for _, v := range []string{"9.9.9", "1.2.0-beta.1"} {
+		replay := up.manifest
+		replay.Version = v
+		if err := installUpdate(ctx, httpGet, replay, key, up.current, target, nil); err == nil || !strings.Contains(err.Error(), "signed") {
+			t.Errorf("the archive of 1.2.0 as %s: %v", v, err)
+		}
 	}
 	otherKey, _, _ := ed25519.GenerateKey(nil)
 	if err := installUpdate(ctx, httpGet, up.manifest, base64.StdEncoding.EncodeToString(otherKey), up.current, target, nil); err == nil {
@@ -203,6 +236,49 @@ func TestUpdater(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(main); string(b) != "v1" {
 		t.Errorf("a refused update changed main to %q", b)
+	}
+}
+
+// Channels: an app of a release is offered no beta unless its user chose
+// prereleases; an app of a beta takes betas and the release after them.
+// Redirects go to HTTPS only.
+func TestUpdaterChannelsAndRedirects(t *testing.T) {
+	ctx := context.Background()
+	srv, key, _, _ := updateServer(t, "1.3.0-beta.1", "v2", "")
+	feed := feedSource(srv.URL + "/update.json")
+	if up, err := checkUpdate(ctx, feed, key, "1.2.0", false); up != nil || err != nil {
+		t.Errorf("an app of a release offered a beta: %+v, %v", up, err)
+	}
+	if up, err := checkUpdate(ctx, feed, key, "1.2.0", true); up == nil || err != nil {
+		t.Errorf("an app of a release that takes prereleases not offered the beta: %+v, %v", up, err)
+	}
+	if up, err := checkUpdate(ctx, feed, key, "1.3.0-alpha.2", false); up == nil || err != nil {
+		t.Errorf("an app of a beta not offered a newer beta: %+v, %v", up, err)
+	}
+	srv2, key2, _, _ := updateServer(t, "1.3.0", "v2", "")
+	if up, err := checkUpdate(ctx, feedSource(srv2.URL+"/update.json"), key2, "1.3.0-beta.4", false); up == nil || err != nil {
+		t.Errorf("an app of a beta not offered the release: %+v, %v", up, err)
+	}
+	for _, c := range []struct {
+		current, offered string
+		pre, takes       bool
+	}{
+		{"0.1.0-beta.2", "0.1.0-beta.3", false, true},
+		{"0.1.0", "0.1.1", false, true},
+		{"0.1.0", "0.2.0-beta.1", false, false},
+		{"0.1.0", "0.2.0-beta.1", true, true},
+		{"0.2.0-beta.1", "0.1.1", true, false},
+	} {
+		if got := update.Takes(c.current, c.offered, c.pre); got != c.takes {
+			t.Errorf("Takes(%s, %s, %t) = %t", c.current, c.offered, c.pre, got)
+		}
+	}
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/update.json", http.StatusFound)
+	}))
+	defer redirect.Close()
+	if _, err := checkUpdate(ctx, feedSource(redirect.URL+"/update.json"), key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Errorf("a redirect to plain HTTP: %v", err)
 	}
 }
 
@@ -266,7 +342,7 @@ func TestUpdaterDelta(t *testing.T) {
 	}
 	unsigned := up.manifest
 	unsigned.Deltas = []update.Delta{delta}
-	unsigned.Deltas[0].Signature = m.Signature
+	unsigned.Deltas[0].Signature, unsigned.Deltas[0].Release = m.Signature, m.Release
 	install(unsigned, up.current, false)
 	if requests("/app.delta") != 3 || requests("/app.tar.gz") != 3 {
 		t.Errorf("downloaded the delta %d times and the archive %d", requests("/app.delta"), requests("/app.tar.gz"))
@@ -384,6 +460,114 @@ func TestUpdaterPrereleases(t *testing.T) {
 	}
 }
 
+// TestUpdaterBetaChannel checks the releases' feed and, with prereleases,
+// the beta channel's of updates.prereleases too, offering the newer.
+func TestUpdaterBetaChannel(t *testing.T) {
+	ctx := context.Background()
+	key := base64.StdEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize))
+	// The version of each channel's manifest, "" for none (404); a status
+	// other than 200 fails it.
+	var mu sync.Mutex
+	versions := map[string]string{}
+	status := map[string]int{}
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, r.URL.Path)
+		if s := status[r.URL.Path]; s != 0 && s != http.StatusOK {
+			http.Error(w, "down", s)
+			return
+		}
+		v := versions[r.URL.Path]
+		if v == "" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"version": %q, "url": "https://example.com/app-%s.tar.gz", "size": 1, "signature": "sig"}`, v, v)
+	}))
+	defer srv.Close()
+	defer func(r []time.Duration) { httpRetries = r }(httpRetries)
+	httpRetries = []time.Duration{time.Millisecond, time.Millisecond}
+	feeds := channelFeeds{srv.URL + "/app/update.json", srv.URL + "/app/beta/update.json"}
+	set := func(release, beta string, betaStatus int) {
+		mu.Lock()
+		versions["/app/update.json"], versions["/app/beta/update.json"] = release, beta
+		status["/app/beta/update.json"] = betaStatus
+		asked = nil
+		mu.Unlock()
+	}
+	for _, c := range []struct {
+		release, beta string
+		betaStatus    int
+		current       string
+		pre           bool
+		want          string // a version, "" for up to date, or "error: …"
+	}{
+		// A fix published after a beta of the next version.
+		{"1.2.1", "1.3.0-beta.2", 200, "1.2.0", false, "1.2.1"},
+		{"1.2.1", "1.3.0-beta.2", 200, "1.2.0", true, "1.3.0-beta.2"},
+		{"1.2.1", "1.3.0-beta.2", 200, "1.3.0-beta.1", true, "1.3.0-beta.2"},
+		{"1.2.1", "1.3.0-beta.2", 200, "1.3.0-beta.2", true, ""},
+		// Never back to 1.2.1.
+		{"1.2.1", "1.3.0-beta.2", 200, "1.3.0-beta.1", false, ""},
+		// The newer of the two, whichever channel's manifest names it.
+		{"1.3.0", "1.3.0-beta.2", 200, "1.3.0-beta.1", true, "1.3.0"},
+		{"1.3.0", "1.3.0", 200, "1.3.0-beta.2", false, "1.3.0"},
+		// The beta channel down or empty: the releases'.
+		{"1.3.0", "", 200, "1.2.0", true, "1.3.0"},
+		{"1.3.0", "1.3.0", 502, "1.2.0", true, "1.3.0"},
+		// Only betas yet: the releases' feed has nothing published, which
+		// is up to date without prereleases.
+		{"", "0.1.0-beta.2", 200, "0.1.0-beta.1", true, "0.1.0-beta.2"},
+		{"", "0.1.0-beta.2", 200, "0.1.0-beta.1", false, ""},
+		{"", "", 200, "0.1.0-beta.1", true, ""},
+		// Nothing published and the beta channel down: its error.
+		{"", "", 502, "0.1.0-beta.1", true, "error: 502"},
+	} {
+		set(c.release, c.beta, c.betaStatus)
+		up, err := checkUpdate(ctx, feeds, key, c.current, c.pre)
+		got := ""
+		switch {
+		case err != nil:
+			got = "error: " + err.Error()
+		case up != nil:
+			got = up.Version
+		}
+		if got != c.want && !(strings.HasPrefix(c.want, "error: ") && strings.HasPrefix(got, "error: ") && strings.Contains(got, strings.TrimPrefix(c.want, "error: "))) {
+			t.Errorf("releases %q, beta %q (%d), from %s, prereleases %t: %s, want %s", c.release, c.beta, c.betaStatus, c.current, c.pre, got, c.want)
+		}
+		mu.Lock()
+		if !c.pre && slices.ContainsFunc(asked, func(p string) bool { return strings.Contains(p, "/beta/") }) {
+			t.Errorf("read the beta channel without prereleases: %v", asked)
+		}
+		mu.Unlock()
+	}
+}
+
+func TestUpdaterConfigured(t *testing.T) {
+	feed, key := packageUpdateFeed, packageUpdateKey
+	defer func() { packageUpdateFeed, packageUpdateKey = feed, key }()
+	packageUpdateFeed, packageUpdateKey = "", ""
+	if Updater.Configured() {
+		t.Error("configured without a feed")
+	}
+	packageUpdateFeed = "https://example.com/update.json"
+	if Updater.Configured() {
+		t.Error("configured without a key")
+	}
+	packageUpdateKey = "k"
+	if !Updater.Configured() {
+		t.Error("not configured with a feed and a key")
+	}
+}
+
+// errSource fails with err.
+type errSource struct{ err error }
+
+func (s errSource) Manifest(context.Context, bool) (io.ReadCloser, error) { return nil, s.err }
+func (s errSource) Open(context.Context, string) (io.ReadCloser, error)   { return nil, s.err }
+
 // testSource serves the update of updateServer as an update service of the
 // app's own could: its manifest names the files by ids that only Open
 // knows, and Open reads them from srv with a client of its own.
@@ -449,7 +633,8 @@ func TestUpdaterSource(t *testing.T) {
 	if up, err := checkUpdate(ctx, src, key, "1.1.9", false); err == nil {
 		t.Errorf("an unsigned update was offered: %+v", up)
 	}
-	src.m.Signature = base64.StdEncoding.EncodeToString(make([]byte, 64))
+	src.m.Signature = m.Signature
+	src.m.Release = base64.StdEncoding.EncodeToString(make([]byte, 64))
 	up, err = checkUpdate(ctx, src, key, "1.1.9", false)
 	if err != nil || up == nil {
 		t.Fatalf("checkUpdate = %+v, %v", up, err)
@@ -516,6 +701,128 @@ func TestHTTPGetRetries(t *testing.T) {
 		t.Errorf("Retry-After 5: %v", got)
 	}
 }
+
+// A download whose connection drops part way goes on with a Range request
+// from where it stopped, through the transport of SetTransport; a server
+// that answers the whole file again, or a file that changed, fails it.
+func TestHTTPGetResumes(t *testing.T) {
+	defer func(d time.Duration) { httpResumeWait = d }(httpResumeWait)
+	httpResumeWait = time.Millisecond
+	data := bytes.Repeat([]byte("0123456789abcdef"), 40_000)
+	var drops, ranges atomic.Int32
+	var ignoreRange atomic.Bool
+	var ifRange atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"v1"`)
+		if rg := r.Header.Get("Range"); rg != "" && !ignoreRange.Load() {
+			ranges.Add(1)
+			ifRange.Store(r.Header.Get("If-Range"))
+			from, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(rg, "bytes="), "-"))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(data)-1, len(data)))
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)-from))
+			w.WriteHeader(http.StatusPartialContent)
+			end := len(data)
+			if drops.Add(1) == 2 { // the first resume dies too, after some bytes
+				end = from + 1000
+			}
+			w.Write(data[from:end])
+			if end < len(data) {
+				hijackClose(w)
+			}
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+		if r.Header.Get("Range") == "" && drops.Load() == 0 {
+			drops.Add(1)
+			w.Write(data[:len(data)/3]) // the first connection dies a third of the way
+			hijackClose(w)
+			return
+		}
+		w.Write(data)
+	}))
+	defer srv.Close()
+	var through atomic.Int32
+	Updater.SetTransport(roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		through.Add(1)
+		return http.DefaultTransport.RoundTrip(r)
+	}))
+	defer Updater.SetTransport(nil)
+
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	sum := sha256.Sum256(data)
+	path := filepath.Join(t.TempDir(), "app.tar.gz")
+	var last int64
+	err := download(t.Context(), httpGet, srv.URL+"/app.tar.gz", int64(len(data)), signed{update.SignRelease(priv, "1.2.0", "", sum[:]), "1.2.0", ""}, pub, path, func(n, _ int64) { last = n })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, data) || last != int64(len(data)) {
+		t.Fatalf("got %d bytes (progress %d), want %d", len(got), last, len(data))
+	}
+	if ranges.Load() != 2 || through.Load() != 3 || ifRange.Load() != `"v1"` {
+		t.Errorf("%d Range requests (If-Range %v), %d requests through the transport", ranges.Load(), ifRange.Load(), through.Load())
+	}
+
+	// A server that sends the whole file again is not joined to the part.
+	drops.Store(0)
+	ignoreRange.Store(true)
+	body, err := httpGet(t.Context(), srv.URL+"/app.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadAll(body)
+	body.Close()
+	if err == nil || !strings.Contains(err.Error(), "not the bytes from") {
+		t.Errorf("a server that does not resume: %v", err)
+	}
+}
+
+// hijackClose ends the connection of a response under way.
+func hijackClose(w http.ResponseWriter) {
+	w.(http.Flusher).Flush()
+	if c, _, err := w.(http.Hijacker).Hijack(); err == nil {
+		c.Close()
+	}
+}
+
+// SetTransport: the checks go through the app's transport, redirects
+// still only to HTTPS, and back to the default once it is nil.
+func TestUpdaterSetTransport(t *testing.T) {
+	ctx := context.Background()
+	srv, key, _, _ := updateServer(t, "1.3.0", "v2", "")
+	var through atomic.Int32
+	Updater.SetTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		through.Add(1)
+		return http.DefaultTransport.RoundTrip(req)
+	}))
+	defer Updater.SetTransport(nil)
+	if up, err := checkUpdate(ctx, feedSource(srv.URL+"/update.json"), key, "1.2.0", false); up == nil || err != nil {
+		t.Fatalf("checkUpdate = %+v, %v", up, err)
+	}
+	if through.Load() == 0 {
+		t.Error("the check did not go through the transport set")
+	}
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/update.json", http.StatusFound)
+	}))
+	defer redirect.Close()
+	if _, err := checkUpdate(ctx, feedSource(redirect.URL+"/update.json"), key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Errorf("a redirect to plain HTTP through the transport set: %v", err)
+	}
+	Updater.SetTransport(nil)
+	n := through.Load()
+	if up, err := checkUpdate(ctx, feedSource(srv.URL+"/update.json"), key, "1.2.0", false); up == nil || err != nil {
+		t.Fatalf("checkUpdate after SetTransport(nil) = %+v, %v", up, err)
+	}
+	if through.Load() != n {
+		t.Error("SetTransport(nil) kept the transport")
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // A server that accepts the connection and never answers is given up on,
 // rather than holding a check open until the socket times out.

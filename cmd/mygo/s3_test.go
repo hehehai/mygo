@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -142,6 +143,67 @@ func TestPublishS3(t *testing.T) {
 		t.Errorf("uploaded\n%v\nwant\n%v", put, want)
 	}
 
+	// With prereleases, a release's manifest goes in the beta directory
+	// too, last, unless a newer prerelease is published there, or the
+	// beta channel's manifest cannot be read.
+	betaStatus, betaVersion := http.StatusNotFound, ""
+	feeds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path != "/app/beta/update-darwin-arm64.json" || betaStatus != http.StatusOK {
+			http.Error(w, http.StatusText(betaStatus), betaStatus)
+			return
+		}
+		fmt.Fprintf(w, `{"version": %q, "url": "https://dl.example.com/app/beta/a.tar.gz", "signature": "s"}`, betaVersion)
+	}))
+	defer feeds.Close()
+	defer func(w func(time.Duration)) { updateRetryWait = w }(updateRetryWait)
+	updateRetryWait = func(time.Duration) {}
+	pre := &Config{root: t.TempDir(), Version: "1.2.0", Updates: &Updates{URL: feeds.URL + "/app", Prereleases: true, S3: &S3{Bucket: "downloads", Prefix: "app", Endpoint: srv.URL}}}
+	for _, tt := range []struct {
+		status  int
+		version string
+		beta    bool
+	}{
+		{http.StatusNotFound, "", true},
+		{http.StatusOK, "1.1.0-beta.1", true},
+		{http.StatusOK, "1.2.0-rc.1", true},
+		{http.StatusOK, "1.3.0-beta.1", false},
+		{http.StatusServiceUnavailable, "", false},
+	} {
+		mu.Lock()
+		put, betaStatus, betaVersion = nil, tt.status, tt.version
+		mu.Unlock()
+		if err := publish(pre, artifacts); err != nil {
+			t.Fatal(err)
+		}
+		if last := put[len(put)-1].path; (last == "/downloads/app/beta/update-darwin-arm64.json") != tt.beta || len(put) != len(want)+btoi(tt.beta) {
+			t.Errorf("published prerelease %s (%d): uploaded %v", tt.version, tt.status, put)
+		}
+	}
+	// A prerelease goes in the beta directory, manifests last.
+	put = nil
+	pre.Version = "1.3.0-beta.1"
+	if err := publish(pre, artifacts); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, o := range put {
+		paths = append(paths, o.path)
+	}
+	if want := []string{
+		"/downloads/app/beta/app-1.2.0.dmg",
+		"/downloads/app/beta/app-1.2.0-darwin-arm64.tar.gz",
+		"/downloads/app/beta/app-1.1.0-to-1.2.0-darwin-arm64.delta",
+		"/downloads/app/beta/app-setup-1.2.0.exe",
+		"/downloads/app/beta/empty.deb",
+		"/downloads/app/beta/app-1.2.0-1.x86_64.rpm",
+		"/downloads/app/beta/install.sh",
+		"/downloads/app/beta/update-darwin-arm64.json",
+	}; !slices.Equal(paths, want) {
+		t.Errorf("prerelease: uploaded\n%v\nwant\n%v", paths, want)
+	}
+
 	c.Updates.S3.Prefix = "denied"
 	if err := publish(c, artifacts); err == nil || !strings.Contains(err.Error(), "AccessDenied: Access Denied") {
 		t.Errorf("error %v", err)
@@ -217,4 +279,11 @@ func TestArchivesFromS3(t *testing.T) {
 	if want := []string{host + "/app/app-1.0.0.tar.gz"}; !slices.Equal(got, want) {
 		t.Errorf("without credentials, requested %v", got)
 	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

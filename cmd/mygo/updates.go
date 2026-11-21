@@ -55,6 +55,16 @@ type Updates struct {
 	// Deltas is how many earlier versions get a delta update: a smaller
 	// download holding only what changed (default 3, 0 for none).
 	Deltas *int `json:"deltas"`
+	// Prereleases, with URL, gives the app a beta channel: the beta
+	// directory of URL (update.PrereleaseDir), whose manifest the server
+	// keeps the newest version of both channels. The files of a version
+	// with a pre-release part, such as 1.3.0-beta.1, point into it; the
+	// build links its manifest into the app beside the releases' one, which
+	// Updater.Check reads too while the app takes prereleases
+	// (Updater.SetPrereleases); deltas are made from the newest versions of
+	// both channels; and -upload to S3 puts a prerelease in it, and a
+	// release's manifests too unless a newer prerelease is there.
+	Prereleases bool `json:"prereleases"`
 }
 
 // deltas returns how many earlier versions get a delta update.
@@ -92,6 +102,9 @@ func (u *Updates) validate() error {
 			return fmt.Errorf("updates.url %q has a query or fragment: it is the URL of a directory, to which the names of the update files are appended", u.URL)
 		}
 	}
+	if u.Prereleases && u.URL == "" {
+		return errors.New("updates.prereleases needs url: the beta channel is the beta/ directory of url (on GitHub, prereleases are GitHub's)")
+	}
 	if u.S3 != nil {
 		if u.URL == "" {
 			return errors.New("updates.s3 needs url, the HTTPS URL that serves the files of the bucket, in place of github")
@@ -109,19 +122,40 @@ func (u *Updates) validate() error {
 	return nil
 }
 
-// updateFeed returns the URL of the manifest of target.
+// updateFeed returns the URL of the manifest of target, the releases'.
 func (c *Config) updateFeed(target string) string {
 	return c.updateFile(update.ManifestName(target), true)
+}
+
+// betaFeed returns the URL of the manifest of target in the beta channel,
+// or "" without one (updates.prereleases).
+func (c *Config) betaFeed(target string) string {
+	if !c.Updates.Prereleases || c.Updates.URL == "" {
+		return ""
+	}
+	return strings.TrimSuffix(c.Updates.URL, "/") + "/" + update.PrereleaseDir + "/" + url.PathEscape(update.ManifestName(target))
+}
+
+// betaChannel reports whether the files of this version go in the beta
+// channel: it is a prerelease, of a build with updates.prereleases.
+func (c *Config) betaChannel() bool {
+	return c.betaFeed("") != "" && update.IsPrerelease(c.Version)
 }
 
 // updateFile returns the URL of a published update file; manifests come
 // from the latest release on GitHub, or with a tag prefix from the newest
 // release tagged with it (a feed that update.ResolveFeed resolves),
-// archives from the release of this version.
+// archives from the release of this version. From a URL with
+// updates.prereleases, the files of a prerelease are in its beta
+// directory, the feed the releases' (betaFeed is the beta channel's).
 func (c *Config) updateFile(name string, latest bool) string {
 	u := c.Updates
 	if u.GitHub == "" {
-		return strings.TrimSuffix(u.URL, "/") + "/" + url.PathEscape(name)
+		base := strings.TrimSuffix(u.URL, "/")
+		if !latest && c.betaChannel() {
+			base += "/" + update.PrereleaseDir
+		}
+		return base + "/" + url.PathEscape(name)
 	}
 	if latest && u.tagged() {
 		return update.TaggedFeed(u.GitHub, u.TagPrefix, name)
@@ -138,8 +172,12 @@ func updateFlags(c *Config, target string) string {
 	if c.Updates == nil {
 		return ""
 	}
-	return " -X " + ldflagsQuote("github.com/egoist/mygo.packageUpdateFeed="+c.updateFeed(target)) +
+	flags := " -X " + ldflagsQuote("github.com/egoist/mygo.packageUpdateFeed="+c.updateFeed(target)) +
 		" -X github.com/egoist/mygo.packageUpdateKey=" + c.Updates.PublicKey
+	if beta := c.betaFeed(target); beta != "" {
+		flags += " -X " + ldflagsQuote("github.com/egoist/mygo.packageUpdateBetaFeed="+beta)
+	}
+	return flags
 }
 
 // signingKey returns the private key that signs updates, or nil when none
@@ -219,7 +257,7 @@ func writeArchive(c *Config, stage, target string, entries []string) ([]string, 
 	}
 	name := c.slug() + "-" + c.Version + "-" + target + ".tar.gz"
 	archive := filepath.Join(stage, name)
-	size, sig, err := writeSigned(archive, key, func(w io.Writer) error {
+	size, sig, digest, err := writeSigned(archive, key, func(w io.Writer) error {
 		return update.WriteArchive(w, stage, entries)
 	})
 	if err != nil {
@@ -235,6 +273,7 @@ func writeArchive(c *Config, stage, target string, entries []string) ([]string, 
 		URL:       c.updateFile(name, false),
 		Size:      size,
 		Signature: sig,
+		Release:   update.SignRelease(key, c.Version, "", digest),
 	}
 	files := []string{archive}
 	if n := c.Updates.deltas(); n > 0 {
@@ -252,12 +291,12 @@ func writeArchive(c *Config, stage, target string, entries []string) ([]string, 
 	return append(files, manifest), nil
 }
 
-// writeSigned writes a file with write and returns its size and signature,
-// none without a key.
-func writeSigned(path string, key ed25519.PrivateKey, write func(io.Writer) error) (int64, string, error) {
+// writeSigned writes a file with write and returns its size, signature
+// (none without a key) and SHA-256 digest.
+func writeSigned(path string, key ed25519.PrivateKey, write func(io.Writer) error) (int64, string, []byte, error) {
 	f, err := os.Create(path)
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 	sum := sha256.New()
 	err = write(io.MultiWriter(f, sum))
@@ -265,42 +304,61 @@ func writeSigned(path string, key ed25519.PrivateKey, write func(io.Writer) erro
 		err = cerr
 	}
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 	info, err := os.Stat(path)
 	switch {
 	case err != nil:
-		return 0, "", err
+		return 0, "", nil, err
 	case key == nil:
-		return info.Size(), "", nil
+		return info.Size(), "", sum.Sum(nil), nil
 	}
-	return info.Size(), update.Sign(key, sum.Sum(nil)), nil
+	return info.Size(), update.Sign(key, sum.Sum(nil)), sum.Sum(nil), nil
 }
 
 // writeDeltas makes delta updates to the app of target in stage from the
 // n versions before it, as Sparkle does: the version of the published
 // manifest of target and those it lists as previous, whose archives it
-// downloads. It adds them to m, with the archives the next version makes
+// downloads; with updates.prereleases also the beta channel's, the
+// published version of each channel first, so that the users of both get
+// a delta. It adds them to m, with the archives the next version makes
 // deltas from, and returns the files written. Deltas only save downloads,
 // so a version without one is skipped with a message.
 func writeDeltas(c *Config, key ed25519.PrivateKey, stage, target string, entries []string, m *update.Manifest, n int) ([]string, error) {
+	var heads, rest []update.Archive
 	published, err := fetchDeltaManifest(c, target)
-	if err != nil {
-		if errors.Is(err, errNotPublished) {
-			logf("No delta updates for %s: no version is published yet", target)
-		} else {
-			warnf("No delta updates for %s: %v", target, err)
+	switch {
+	case err == nil:
+		heads = append(heads, update.Archive{Version: published.Version, URL: published.URL, Size: published.Size, Signature: published.Signature})
+		rest = append(rest, published.Previous...)
+	case !errors.Is(err, errNotPublished):
+		warnf("No delta updates for %s from %s: %v", target, c.updateFeed(target), err)
+	}
+	if beta := c.betaFeed(target); beta != "" {
+		published, err := fetchManifest(beta)
+		switch {
+		case err == nil:
+			heads = append(heads, update.Archive{Version: published.Version, URL: published.URL, Size: published.Size, Signature: published.Signature})
+			rest = append(rest, published.Previous...)
+		case !errors.Is(err, errNotPublished):
+			warnf("No delta updates for %s from %s: %v", target, beta, err)
 		}
+	}
+	if len(heads) == 0 {
+		logf("No delta updates for %s: no version is published yet", target)
 		return nil, nil
 	}
+	byVersion := func(a, b update.Archive) int { return update.Compare(b.Version, a.Version) }
+	slices.SortStableFunc(heads, byVersion)
+	slices.SortStableFunc(rest, byVersion)
 	var bases []update.Archive
-	for _, a := range append([]update.Archive{{Version: published.Version, URL: published.URL, Size: published.Size, Signature: published.Signature}}, published.Previous...) {
+	for _, a := range append(heads, rest...) {
 		if update.Compare(a.Version, c.Version) < 0 && !slices.ContainsFunc(bases, func(b update.Archive) bool { return b.Version == a.Version }) {
 			bases = append(bases, a)
 		}
 	}
 	if len(bases) == 0 {
-		logf("No delta updates for %s: the published version is %s", target, published.Version)
+		logf("No delta updates for %s: the published version is %s", target, heads[0].Version)
 		return nil, nil
 	}
 	bases = bases[:min(len(bases), n)]
@@ -367,14 +425,14 @@ func writeDelta(get archiveGetter, key ed25519.PrivateKey, base update.Archive, 
 		}
 		oldDir = filepath.Join(oldDir, all[0].Name())
 	}
-	size, sig, err := writeSigned(path, key, func(w io.Writer) error {
+	size, sig, digest, err := writeSigned(path, key, func(w io.Writer) error {
 		return update.WriteDelta(w, base.Version, version, oldDir, newDir, newEntries)
 	})
 	if err != nil {
 		os.Remove(path)
 		return update.Delta{}, err
 	}
-	return update.Delta{From: base.Version, Size: size, Signature: sig}, nil
+	return update.Delta{From: base.Version, Size: size, Signature: sig, Release: update.SignRelease(key, version, base.Version, digest)}, nil
 }
 
 var errNotPublished = errors.New("not published")

@@ -138,7 +138,45 @@ to the newest one that is not a prerelease, usually one request within
 the API's 60 an hour for each address, with or without a `tagPrefix`.
 Deltas start from the published release, so an app on a prerelease
 downloads the next one whole. Apps updated from `url` read the manifest
-the server has either way.
+the server has either way, unless they have a beta channel (below).
+
+Whatever the feed offers, an app running a release takes no prerelease
+until its user chooses them, and an app running a prerelease takes the
+next prerelease and the release after it: the channel is part of the
+release signature (see [signatures](#signatures)), so a feed cannot
+offer a beta as a release.
+
+### A beta channel beside `url`
+
+With `url`, set `prereleases` to give the app a beta channel in the
+`beta` directory of `url`:
+
+```
+https://downloads.example.com/my-app/update-darwin-arm64.json       releases
+https://downloads.example.com/my-app/beta/update-darwin-arm64.json  the beta channel
+```
+
+The files of a version with a pre-release part, such as `1.3.0-beta.1`,
+point into `beta/`; a release's stay in `url`. The beta channel's manifest
+is the newest version of both channels: publish a release's manifest in
+`beta/` too unless a newer beta is there (`mygo build -upload` to S3 does).
+The build links both manifests into the app; with
+`SetPrereleases(true)`, `Check` reads both and offers the newer, and the
+one it can read when the other is missing or down. Delta updates are made
+from the newest version of both channels, then the versions their
+manifests list, so a user on the last beta and one on the last release
+both download a delta of the next version.
+
+### Signatures
+
+`mygo build` signs each archive and delta twice with the private key:
+`signature` signs its SHA-256 alone, for apps built before release
+signatures; `release` signs the SHA-256 with the version it makes, its
+channel (`beta` for a version with a pre-release part, `stable`
+otherwise) and, for a delta, the version it updates from. The updater
+checks `release` only, so an archive cannot be offered as another version:
+not an old one as newer, nor a beta as a release. Redirects are followed
+to HTTPS only.
 
 ### Publishing to S3
 
@@ -330,10 +368,13 @@ mygo.Updater.SetSource(accountUpdates{token: session.Token})
 
 `Check` then reads the manifest from the source, and `Install` downloads
 the archive or delta through its `Open`; `prereleases` is what
-`SetPrereleases` set, for a source with a beta channel. The URLs are the
-manifest's, so a service that writes its own manifests from those of
-`mygo build` may name the files by ids of its own, as long as the sizes
-and signatures stay. `SetSource(nil)` goes back to the feed.
+`SetPrereleases` set, for a source with a beta channel. When nothing is
+published, `Manifest` returns an error wrapping `mygo.ErrNotPublished` or
+`fs.ErrNotExist`, which `Check` reports as no update (a feed's 404 is the
+same). The URLs are the manifest's, so a service that writes its own
+manifests from those of `mygo build` may name the files by ids of its own,
+as long as the versions, sizes and release signatures stay.
+`SetSource(nil)` goes back to the feed.
 
 ## Where apps can update
 

@@ -1,0 +1,74 @@
+// The probe app of the update chain check (actnow/upchain): built by a
+// MyGo (an app's old vendored one, or the fork) into a bundle of the app's
+// name and a version, and run from the bundle without UI. It checks for an
+// update and installs it with that MyGo's updater, as it is, through the
+// exported API the apps use; the run's test CA is added to the default
+// transport only, which the updaters use for the feed.
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/egoist/mygo"
+)
+
+const (
+	name    = "@NAME@"
+	version = "@VERSION@"
+)
+
+func main() {
+	// No backend: the name and version are not read from the bundle, so
+	// AppKit is never touched.
+	mygo.App.SetName(name)
+	mygo.App.SetVersion(version)
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(version)
+		return
+	}
+	if ca := os.Getenv("UPCHAIN_CA"); ca != "" {
+		pem, err := os.ReadFile(ca)
+		if err != nil {
+			fail(err)
+		}
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM(pem)
+		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: pool}
+	}
+	//PRE mygo.Updater.SetPrereleases(os.Getenv("UPCHAIN_PRERELEASES") == "1")
+	fmt.Printf("current=%s\nenabled=%t\n", version, mygo.Updater.Enabled())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	up, err := mygo.Updater.Check(ctx)
+	switch {
+	case err != nil:
+		fmt.Printf("check=error\nerror=%v\n", err)
+		return
+	case up == nil:
+		fmt.Println("check=none")
+		return
+	}
+	fmt.Printf("check=offered\noffered=%s\n", up.Version)
+	if os.Getenv("UPCHAIN_PROBE") != "install" {
+		return
+	}
+	var last [2]int64
+	err = up.Install(ctx, func(n, total int64) { last = [2]int64{n, total} })
+	fmt.Printf("downloaded=%d/%d\n", last[0], last[1])
+	if err != nil {
+		fmt.Printf("install=error\nerror=%v\n", err)
+		return
+	}
+	fmt.Println("install=ok")
+}
+
+func fail(err error) {
+	fmt.Printf("error=%v\n", err)
+	os.Exit(2)
+}

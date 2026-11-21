@@ -1,0 +1,27 @@
+package main
+
+// Copied into a scratch copy of a MyGo tree's cmd/mygo by the update chain
+// check (actnow/upchain): the build tool trusts the run's test CA, for the
+// local HTTPS feed it reads the published versions from to make deltas.
+// Nothing else of the build changes. Never committed into a MyGo tree.
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"net/http"
+	"os"
+)
+
+func init() {
+	ca := os.Getenv("UPCHAIN_CA")
+	if ca == "" {
+		return
+	}
+	pem, err := os.ReadFile(ca)
+	if err != nil {
+		panic(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(pem)
+	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: pool}
+}

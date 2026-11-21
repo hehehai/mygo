@@ -3,6 +3,7 @@
 package mygo
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -32,10 +33,12 @@ import (
 // Set by `mygo build` with -ldflags -X when mygo.config.ts configures updates:
 // the manifest of this build's target, or with a tag prefix on GitHub its
 // feed in the newest tagged release (update.TaggedFeed), and the public key
-// updates must be signed with.
+// updates must be signed with; with updates.prereleases, the manifest of the
+// beta channel too (update.PrereleaseDir).
 var (
-	packageUpdateFeed string
-	packageUpdateKey  string
+	packageUpdateFeed     string
+	packageUpdateKey      string
+	packageUpdateBetaFeed string
 )
 
 // startExe is the executable the app started from. On Linux, os.Executable
@@ -69,12 +72,16 @@ var updateSource atomic.Pointer[UpdateSource]
 // has, an endpoint that needs the user's credentials, or a channel the app
 // chooses while it runs. It serves what `mygo build` publishes, from
 // wherever the app keeps it, and Updater checks it as it checks the feed's:
-// the archive and deltas must be signed with the key of updates.publicKey
-// that the app was built with, or they are not installed.
+// the archive and deltas must carry the release signatures `mygo build`
+// writes (update.ReleaseMessage: the digest with the version and channel),
+// made with the key of updates.publicKey that the app was built with, or
+// they are not installed.
 type UpdateSource interface {
 	// Manifest returns the manifest of the running platform: the JSON that
 	// `mygo build` writes as update-<target>.json, such as
-	// update-darwin-arm64.json, of at most 1 MiB.
+	// update-darwin-arm64.json, of at most 1 MiB, or an error wrapping
+	// ErrNotPublished or fs.ErrNotExist when none is published, which
+	// Check reports as no update.
 	// prereleases reports whether the app offers them (SetPrereleases).
 	Manifest(ctx context.Context, prereleases bool) (io.ReadCloser, error)
 	// Open returns the file at url, which the manifest names: the archive
@@ -100,6 +107,14 @@ func (u *UpdaterModule) SetSource(s UpdateSource) {
 // ErrUpdatesDisabled is returned by Check for builds without updates:
 // development builds, and builds of apps without updates in mygo.config.ts.
 var ErrUpdatesDisabled = errors.New("mygo: updates are not enabled for this build")
+
+// ErrNotPublished says that a feed has no version published: its manifest
+// is not found (404), as before an app's first release or after every
+// release was withdrawn, or GitHub has no release of its tag prefix.
+// Nothing published is nothing newer, so Check returns no update and no
+// error for it. An UpdateSource returns an error wrapping it, or
+// fs.ErrNotExist, for the same.
+var ErrNotPublished = update.ErrNotPublished
 
 // Update is a newer version of the app, found by Updater.Check.
 type Update struct {
@@ -137,6 +152,17 @@ func (u *UpdaterModule) Enabled() bool {
 	return true
 }
 
+// Configured reports whether the build links an update feed and its key:
+// `mygo build` with updates in mygo.config.ts, which is how an app tells
+// its published builds from development ones (it may honour developer
+// overrides, such as environment variables naming other executables to
+// run, only in the latter: in a published build another process of the
+// user could set them and have the app run its code). Unlike Enabled it
+// ignores where the app is installed and MYGO_ENV.
+func (u *UpdaterModule) Configured() bool {
+	return packageUpdateFeed != "" && packageUpdateKey != ""
+}
+
 // Check asks the update feed, or the source of SetSource, for a version
 // newer than the running one and returns it, or nil when the app is up to
 // date.
@@ -145,6 +171,9 @@ func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
 		return nil, ErrUpdatesDisabled
 	}
 	var src UpdateSource = feedSource(packageUpdateFeed)
+	if packageUpdateBetaFeed != "" {
+		src = channelFeeds{packageUpdateFeed, packageUpdateBetaFeed}
+	}
 	if s := updateSource.Load(); s != nil {
 		src = *s
 	}
@@ -155,12 +184,16 @@ func (u *UpdaterModule) Check(ctx context.Context) (*Update, error) {
 // for the users of an app who chose its beta: with updates on GitHub,
 // Check then reads the release of the highest version that is not a
 // draft, through the GitHub API (usually one request a check), so that a
-// release newer than the prereleases is offered too. Check never offers a
-// version older than the running one, so turning it off waits for the
-// release after the prerelease the app runs. Updates of updates.url are
-// the manifest the server has, whichever is set. It is off at launch; the
-// app keeps the user's choice and sets it again. It may be called from
-// any goroutine.
+// release newer than the prereleases is offered too. With updates.url and
+// updates.prereleases, Check reads the manifest of the beta channel too,
+// in the beta directory of url, and offers the newer of the two; without
+// updates.prereleases, updates of updates.url are the manifest the server
+// has. Off, an app running a release is offered no prerelease, whatever
+// the feed says; an app running a prerelease takes the next prerelease and
+// the release after it. Check never offers a version older than the
+// running one, so turning it off waits for the release after the
+// prerelease the app runs. It is off at launch; the app keeps the user's
+// choice and sets it again. It may be called from any goroutine.
 func (u *UpdaterModule) SetPrereleases(on bool) { prereleases.Store(on) }
 
 // Prereleases reports whether Check offers prereleases (SetPrereleases).
@@ -186,8 +219,74 @@ func (f feedSource) Open(ctx context.Context, url string) (io.ReadCloser, error)
 	return httpGet(ctx, url)
 }
 
+// channelFeeds are the feed of the releases and that of the beta channel
+// of a build with updates.url and updates.prereleases. With prereleases,
+// Manifest reads both and returns the newer; when one cannot be read, such
+// as a beta channel that has nothing yet (404), the other; when neither
+// can, the releases' error, or the beta channel's when the releases have
+// nothing published.
+type channelFeeds struct {
+	releases, beta string
+}
+
+func (f channelFeeds) Manifest(ctx context.Context, pre bool) (io.ReadCloser, error) {
+	if !pre {
+		return feedSource(f.releases).Manifest(ctx, false)
+	}
+	beta, berr := readManifest(ctx, f.beta)
+	if berr != nil && ctx.Err() != nil {
+		return nil, berr
+	}
+	rel, err := readManifest(ctx, f.releases)
+	newer := func(a, b []byte) bool {
+		var ma, mb struct {
+			Version string `json:"version"`
+		}
+		return json.Unmarshal(a, &ma) == nil && (json.Unmarshal(b, &mb) != nil || update.Compare(ma.Version, mb.Version) > 0)
+	}
+	switch {
+	case berr == nil && err == nil:
+		if newer(beta, rel) {
+			return io.NopCloser(bytes.NewReader(beta)), nil
+		}
+		return io.NopCloser(bytes.NewReader(rel)), nil
+	case berr == nil:
+		if !errors.Is(err, ErrNotPublished) {
+			log.Printf("mygo: checked the beta channel for updates, as the releases' manifest could not be read: %v", err)
+		}
+		return io.NopCloser(bytes.NewReader(beta)), nil
+	case err == nil:
+		if !errors.Is(berr, ErrNotPublished) {
+			log.Printf("mygo: checked the releases for updates, as the beta channel's manifest could not be read: %v", berr)
+		}
+		return io.NopCloser(bytes.NewReader(rel)), nil
+	case errors.Is(err, ErrNotPublished) && !errors.Is(berr, ErrNotPublished):
+		return nil, berr
+	}
+	return nil, err
+}
+
+func (f channelFeeds) Open(ctx context.Context, url string) (io.ReadCloser, error) {
+	return httpGet(ctx, url)
+}
+
+// readManifest reads the manifest at url, at most update.MaxManifestSize.
+func readManifest(ctx context.Context, url string) ([]byte, error) {
+	body, err := httpGet(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	return io.ReadAll(io.LimitReader(body, update.MaxManifestSize))
+}
+
 func checkUpdate(ctx context.Context, src UpdateSource, key, current string, pre bool) (*Update, error) {
 	body, err := src.Manifest(ctx, pre)
+	if errors.Is(err, ErrNotPublished) || errors.Is(err, fs.ErrNotExist) {
+		// No manifest: nothing has been published yet (or every release
+		// was withdrawn), so the app is up to date.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("mygo: checking for updates: %w", err)
 	}
@@ -199,7 +298,11 @@ func checkUpdate(ctx context.Context, src UpdateSource, key, current string, pre
 	if m.Version == "" || m.URL == "" || m.Signature == "" {
 		return nil, errors.New("mygo: checking for updates: incomplete manifest")
 	}
-	if update.Compare(m.Version, current) <= 0 {
+	// A newer version, of a channel this app takes (no beta for an app of a
+	// release, unless its user chose prereleases); the release signature,
+	// checked as Install downloads, binds the version and its channel to
+	// the archive.
+	if !update.Takes(current, m.Version, pre) {
 		return nil, nil
 	}
 	up := &Update{Version: m.Version, Notes: m.Notes, manifest: m, key: key, current: current, source: src}
@@ -289,7 +392,7 @@ func installUpdate(ctx context.Context, get update.Getter, m update.Manifest, ke
 	}
 
 	if d := m.Delta(current); d != nil {
-		err := applyDelta(ctx, get, *d, pub, m.Version, target, work, unpacked, progress)
+		err := applyDelta(ctx, get, *d, pub, m.Version, current, target, work, unpacked, progress)
 		if err == nil {
 			return swap(unpacked, target)
 		}
@@ -306,7 +409,7 @@ func installUpdate(ctx context.Context, get update.Getter, m update.Manifest, ke
 		return fmt.Errorf("invalid size %d", m.Size)
 	}
 	archive := filepath.Join(work, "update.tar.gz")
-	if err := download(ctx, get, m.URL, m.Size, m.Signature, pub, archive, progress); err != nil {
+	if err := download(ctx, get, m.URL, m.Size, signed{m.Release, m.Version, ""}, pub, archive, progress); err != nil {
 		return err
 	}
 	f, err := os.Open(archive)
@@ -336,12 +439,15 @@ func workPattern(target string) string {
 // applyDelta downloads the delta d into work and makes the new version of
 // the app at target from it, in dir: its bundle on macOS, in dir too, as
 // the bundle of an archive is.
-func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25519.PublicKey, version, target, work, dir string, progress func(downloaded, total int64)) error {
+func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25519.PublicKey, version, current, target, work, dir string, progress func(downloaded, total int64)) error {
 	if d.Size <= 0 || d.Size > update.MaxArchiveSize {
 		return fmt.Errorf("invalid size %d", d.Size)
 	}
+	if d.From != current {
+		return fmt.Errorf("the delta updates %s, not %s", d.From, current)
+	}
 	path := filepath.Join(work, "update.delta")
-	if err := download(ctx, get, d.URL, d.Size, d.Signature, pub, path, progress); err != nil {
+	if err := download(ctx, get, d.URL, d.Size, signed{d.Release, version, d.From}, pub, path, progress); err != nil {
 		return err
 	}
 	f, err := os.Open(path)
@@ -358,9 +464,18 @@ func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25
 	return update.ApplyDelta(f, d.Size, d.From, version, target, dir)
 }
 
+// signed is the release signature of a download (update.ReleaseMessage):
+// of the digest with the version it makes, from version from for a delta.
+// It is the signature the updater checks, whatever the source; the
+// archive's own signature, which does not say what version it is, is left
+// to apps built before release signatures.
+type signed struct {
+	release, version, from string
+}
+
 // download fetches url with get into the file path and checks its size and
-// signature.
-func download(ctx context.Context, get update.Getter, url string, size int64, signature string, pub ed25519.PublicKey, path string, progress func(downloaded, total int64)) error {
+// release signature.
+func download(ctx context.Context, get update.Getter, url string, size int64, sig signed, pub ed25519.PublicKey, path string, progress func(downloaded, total int64)) error {
 	body, err := get(ctx, url)
 	if err != nil {
 		return err
@@ -381,7 +496,7 @@ func download(ctx context.Context, get update.Getter, url string, size int64, si
 	if n != size {
 		return fmt.Errorf("downloaded %d bytes, want %d", n, size)
 	}
-	return update.Verify(pub, sum.Sum(nil), signature)
+	return update.VerifyRelease(pub, sig.version, sig.from, sum.Sum(nil), sig.release)
 }
 
 // stagedUpdate is a new version of the app bundle target, at bundle in
@@ -695,6 +810,20 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname())) {
 		return nil, fmt.Errorf("refusing to download %s: updates need HTTPS", rawURL)
 	}
+	body, validator, err := httpRequest(ctx, rawURL, 0, "")
+	if err != nil {
+		return nil, err
+	}
+	return &resumingBody{ctx: ctx, url: rawURL, body: body, validator: validator}, nil
+}
+
+// httpRequest asks for rawURL from byte offset on, with a Range request
+// when offset > 0 (If-Range validator, the ETag or Last-Modified of the
+// first response, so that a file that changed is not joined to another),
+// which must be answered with 206 Partial Content from offset. It tries a
+// failure that a moment may mend again (httpRetries), and returns the body
+// and the validator of the response.
+func httpRequest(ctx context.Context, rawURL string, offset int64, validator string) (io.ReadCloser, string, error) {
 	client := httpClient()
 	for try := 0; ; try++ {
 		// Canceled when the body closes, or when nothing arrives: the one
@@ -704,37 +833,153 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			cancel()
-			return nil, err
+			return nil, "", err
 		}
 		// Not the app's name: GitHub's release assets come from a store that
 		// answers 400 to a User-Agent with bytes outside ASCII, as 云音乐, for
 		// every file its CDN has not cached yet.
 		req.Header.Set("User-Agent", "mygo-updater")
+		want := http.StatusOK
+		if offset > 0 {
+			want = http.StatusPartialContent
+			req.Header.Set("Range", "bytes="+strconv.FormatInt(offset, 10)+"-")
+			if validator != "" {
+				req.Header.Set("If-Range", validator)
+			}
+		}
 		resp, err := client.Do(req)
 		var wait time.Duration
 		switch {
 		case err != nil:
 			cancel()
-			if ctx.Err() != nil || try >= len(httpRetries) {
-				return nil, err
+			if ctx.Err() != nil || try >= len(httpRetries) || errors.Is(err, errNeedHTTPS) {
+				return nil, "", err
 			}
-		case resp.StatusCode == http.StatusOK:
-			return newStalledBody(resp.Body, cancel), nil
+		case resp.StatusCode == want && (offset == 0 || contentRangeFrom(resp.Header.Get("Content-Range")) == offset):
+			v := resp.Header.Get("ETag")
+			if v == "" || strings.HasPrefix(v, "W/") {
+				v = resp.Header.Get("Last-Modified")
+			}
+			return newStalledBody(resp.Body, cancel), v, nil
+		case offset > 0 && resp.StatusCode/100 == 2:
+			// The whole file, or another part: the server does not resume
+			// this one, or it changed.
+			resp.Body.Close()
+			cancel()
+			return nil, "", fmt.Errorf("GET %s: %s, not the bytes from %d", rawURL, resp.Status, offset)
 		default:
 			resp.Body.Close()
 			cancel()
 			if !transientStatus(resp.StatusCode) || try >= len(httpRetries) {
-				return nil, fmt.Errorf("GET %s: %s", rawURL, resp.Status)
+				return nil, "", &httpStatusError{URL: rawURL, Code: resp.StatusCode, Status: resp.Status}
 			}
 			wait = retryAfter(resp.Header.Get("Retry-After"))
 		}
 		wait = max(wait, httpRetries[try])
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, "", ctx.Err()
 		case <-time.After(wait):
 		}
 	}
+}
+
+// contentRangeFrom is the first byte of a Content-Range header,
+// "bytes 100-199/200", or -1.
+func contentRangeFrom(h string) int64 {
+	rest, ok := strings.CutPrefix(h, "bytes ")
+	from, _, ok2 := strings.Cut(rest, "-")
+	n, err := strconv.ParseInt(from, 10, 64)
+	if !ok || !ok2 || err != nil {
+		return -1
+	}
+	return n
+}
+
+// httpResumes is how many times in a row a body whose connection drops (a
+// proxy resetting it, a network change, nothing arriving for
+// httpStallTimeout) is asked for again from where it stopped, and
+// httpResumeWait how long before the first time, doubling after each:
+// a big update over a slow proxy goes on instead of failing part way and
+// starting over. A resume that brings bytes starts the count again.
+var (
+	httpResumes    = 5
+	httpResumeWait = time.Second
+)
+
+// resumingBody is the body of httpGet: when its connection fails part way
+// it asks for the rest with a Range request (httpResumes).
+type resumingBody struct {
+	ctx       context.Context
+	url       string
+	body      io.ReadCloser // nil after a failure, until resumed
+	validator string
+	n         int64 // bytes read
+	failures  int   // resumes in a row without a byte
+	err       error // the failure being resumed from
+}
+
+func (b *resumingBody) Read(p []byte) (int, error) {
+	for {
+		if b.body == nil {
+			if err := b.resume(); err != nil {
+				return 0, err
+			}
+		}
+		n, err := b.body.Read(p)
+		b.n += int64(n)
+		if n > 0 {
+			b.failures = 0
+		}
+		if err == nil || err == io.EOF || b.ctx.Err() != nil || b.failures >= httpResumes {
+			return n, err
+		}
+		b.body.Close()
+		b.body, b.err = nil, err
+		if n > 0 {
+			return n, nil // the next read resumes
+		}
+	}
+}
+
+// resume waits, then asks for the rest of the body, or returns the failure
+// it resumes from once that does not work.
+func (b *resumingBody) resume() error {
+	wait := httpResumeWait << b.failures
+	b.failures++
+	select {
+	case <-b.ctx.Done():
+		return b.err
+	case <-time.After(wait):
+	}
+	log.Printf("mygo: resuming %s from byte %d after: %v", b.url, b.n, b.err)
+	body, _, err := httpRequest(b.ctx, b.url, b.n, b.validator)
+	if err != nil {
+		return fmt.Errorf("%w (resuming: %v)", b.err, err)
+	}
+	b.body = body
+	return nil
+}
+
+func (b *resumingBody) Close() error {
+	if b.body == nil {
+		return nil
+	}
+	return b.body.Close()
+}
+
+// httpStatusError is a response of httpGet other than 200 OK. A 404 is
+// ErrNotPublished (errors.Is): a file that is not published.
+type httpStatusError struct {
+	URL    string
+	Code   int
+	Status string
+}
+
+func (e *httpStatusError) Error() string { return "GET " + e.URL + ": " + e.Status }
+
+func (e *httpStatusError) Is(target error) bool {
+	return e.Code == http.StatusNotFound && target == ErrNotPublished
 }
 
 // httpHeaderTimeout is how long the headers of a response may take to
@@ -757,15 +1002,54 @@ var updateHTTPClient struct {
 }
 
 func httpClient() *http.Client {
+	if rt := updateTransport.Load(); rt != nil {
+		return &http.Client{Transport: *rt, CheckRedirect: httpsRedirects}
+	}
 	updateHTTPClient.once.Do(func() { updateHTTPClient.client = newHTTPClient() })
 	return updateHTTPClient.client
+}
+
+// updateTransport is the transport of SetTransport, nil for the default.
+var updateTransport atomic.Pointer[http.RoundTripper]
+
+// SetTransport sets how the updater reaches the network for the feed of
+// mygo.config.ts — its checks and downloads — for an app with a way of its
+// own: a proxy rule of its settings, retries, a fallback to a direct
+// connection. nil, the default, is the transport of package netproxy,
+// which follows the system's proxy settings. Redirects still go to HTTPS
+// only, downloads that break off still resume, and what is downloaded is
+// still checked against the release signatures. An UpdateSource of
+// SetSource downloads its own way. It may be called from any goroutine.
+func (u *UpdaterModule) SetTransport(rt http.RoundTripper) {
+	if rt == nil {
+		updateTransport.Store(nil)
+		return
+	}
+	updateTransport.Store(&rt)
 }
 
 func newHTTPClient() *http.Client {
 	transport := netproxy.Transport().Clone()
 	transport.ResponseHeaderTimeout = httpHeaderTimeout
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport, CheckRedirect: httpsRedirects}
 }
+
+// httpsRedirects follows redirects to HTTPS only: an update's files must
+// not come over plain HTTP, whatever sends them on. Plain HTTP stays
+// allowed on the loopback interface, for tests.
+func httpsRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" && !(req.URL.Scheme == "http" && isLoopback(req.URL.Hostname())) {
+		return fmt.Errorf("refusing a redirect to %s: %w", req.URL.Redacted(), errNeedHTTPS)
+	}
+	return nil
+}
+
+// errNeedHTTPS is the error of a redirect to plain HTTP, which asking again
+// does not mend.
+var errNeedHTTPS = errors.New("updates need HTTPS")
 
 // stalledBody cancels the request of a body that stops arriving, and says
 // so instead of the canceled request it would otherwise be read as.

@@ -32,6 +32,11 @@ type Manifest struct {
 	URL       string `json:"url"`
 	Size      int64  `json:"size"`
 	Signature string `json:"signature"`
+	// Release is the Ed25519 signature of ReleaseMessage: the archive's
+	// digest with the version and the channel it is published as
+	// (release.go). The updater requires it; Signature stays for apps
+	// built before release signatures, which still check it.
+	Release string `json:"release,omitempty"`
 	// Deltas update earlier versions with smaller downloads (delta.go).
 	Deltas []Delta `json:"deltas,omitempty"`
 	// Previous are the archives of the versions before, newest first,
@@ -46,6 +51,8 @@ type Delta struct {
 	URL       string `json:"url"`
 	Size      int64  `json:"size"`
 	Signature string `json:"signature"`
+	// Release signs ReleaseMessage of the delta, from From.
+	Release string `json:"release,omitempty"`
 }
 
 // Archive is the archive of an earlier version.
