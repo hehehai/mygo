@@ -158,7 +158,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, root, mode string) {
 
 // fault changes a manifest as mode says.
 func fault(data []byte, mode string) ([]byte, error) {
-	if mode == "normal" {
+	if mode == "normal" || mode == "baddelta" {
 		return data, nil
 	}
 	var m map[string]any

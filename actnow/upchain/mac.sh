@@ -1,8 +1,9 @@
 #!/bin/bash
 # The Mac half of the update chain check (README.md), run by upchain.sh in
 # a run directory it copied over: R/upchain (these tools) and R/run.env,
-# whose OLD_CACHE (the app's vendored MyGo at the old tag, as it is) and
-# FORK_CACHE (MyGo's fork) it copies into R/old and R/fork. It never starts an app's UI, never takes the foreground,
+# whose OLD_CACHE (the packages of the app's vendored MyGo at the old tag
+# that the probe and cmd/mygo build from, as they are) it copies into
+# R/old, and FORK_SHA (the fork's commit, fetched from GitHub) into R/fork. It never starts an app's UI, never takes the foreground,
 # never changes HOME and uses no keychain (ad hoc signatures, no
 # notarization, a test key pair and a test CA trusted by the probes and
 # build tools only); it stops its own process group if a keychain or
@@ -18,6 +19,8 @@ R=$(cd "$1" && pwd)
 source "$R/run.env"
 export PATH="$HOME/.local/go/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export ACTNOW_NO_KEYCHAIN=1 GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0
+# Go modules and GitHub through the Mac's proxy; the feed directly.
+export HTTPS_PROXY=${UPCHAIN_PROXY:-http://127.0.0.1:7897} HTTP_PROXY=${UPCHAIN_PROXY:-http://127.0.0.1:7897} NO_PROXY=127.0.0.1,localhost GIT_TERMINAL_PROMPT=0
 unset MYGO_UPDATER_PRIVATE_KEY MYGO_ENV MYGO_DEV
 W="$R/w"
 REPORT="$R/report.txt"
@@ -76,7 +79,13 @@ say "mac: $(sw_vers -productVersion), $(go version | cut -d' ' -f3)"
 
 # --- The trees, from the cache upchain.sh sent them to.
 rm -rf "$R/old" "$R/fork"
-cp -R "$R/$OLD_CACHE" "$R/old" && cp -R "$R/$FORK_CACHE" "$R/fork" || die "copying the trees from the cache"
+cp -R "$R/$OLD_CACHE" "$R/old" || die "copying the old tree from the cache"
+# The fork's commit, from GitHub, into a blobless mirror kept beside the runs.
+MIRROR="$R/../cache/mygo.git"
+[ -d "$MIRROR" ] || run clone git clone -q --bare --filter=blob:none https://github.com/hehehai/mygo "$MIRROR" || die "cloning the fork"
+run fetch git -C "$MIRROR" fetch -q origin "$FORK_SHA" || git -C "$MIRROR" cat-file -e "$FORK_SHA^{commit}" 2>/dev/null || die "fetching the fork's $FORK_SHA"
+mkdir -p "$R/fork"
+git -C "$MIRROR" archive "$FORK_SHA" | tar -x -C "$R/fork" --exclude docs --exclude docs-zh --exclude website --exclude benchmarks --exclude examples || die "extracting the fork"
 
 # --- Tools: the helper, and the two MyGo CLIs, which trust the test CA.
 run tool bash -c "cd '$R/upchain' && go build -o '$W/bin/upchain' ./tool" || die "building the helper"
@@ -117,7 +126,7 @@ build() {
   esac
   rm -rf "$dir"; mkdir -p "$dir"
   sed -e "s|@NAME@|$NAME|" -e "s|@VERSION@|$version|" "$R/upchain/probe/main.go.in" >"$dir/main.go"
-  if grep -q 'func (u \*UpdaterModule) SetPrereleases' "$mygo"/updater*.go; then
+  if [ "$cli" = fork ] || [ "$OLD_HAS_PRE" = 1 ]; then
     sed -i '' 's|//PRE ||' "$dir/main.go"
   fi
   cat >"$dir/go.mod" <<EOF
@@ -141,7 +150,10 @@ EOF
   "updates": {"publicKey": "$PUB", "url": "$url", "privateKey": "$W/keys/mygo-update.key"$prekey}
 }
 EOF
-  run "tidy-$version" bash -c "cd '$dir' && go mod tidy" || return 1
+  # Not go mod tidy, which wants the packages of every platform (the old
+  # tree has only those the Mac builds): MyGo's go.sum, and -mod=mod.
+  cp "$mygo/go.sum" "$dir/go.sum"
+  run "deps-$version" bash -c "cd '$dir' && GOOS=darwin go build -o /dev/null ." || return 1
   run "build-$version" bash -c "cd '$dir' && '$W/bin/mygo-$cli' build -sign - -skip-dmg -skip-notarize -platform '$PLATFORM'"
 }
 
@@ -233,7 +245,7 @@ build "$W/p1" fork "$V1" "$NEW_STYLE" || die "building $V1 with the fork"
 OUT1="$W/p1/build/$TGT"
 reference "$V1" "$OUT1"
 if run sitecheck1 "$W/bin/upchain" sitecheck -site "$SITE" -app "$FEED" -version "$V1" -pub "$PUB" -dir "$OUT1" -release; then
-  pass "$V1: the site's checks (names, URLs in $(case $V1 in *-*) echo beta/ ;; *) echo the releases\' directory ;; esac), sizes, signatures, release signatures)"
+  pass "$V1: the site's checks (names, URLs in the beta channel's directory, sizes, signatures, release signatures)"
 else fail "$V1: the site's checks"; fi
 grep -q "\"from\": \"$OLD_VERSION\"" "$OUT1/update-$TGT.json" && pass "$V1 has a delta from $OLD_VERSION" || fail "$V1 has no delta from $OLD_VERSION"
 run publish1 "$W/bin/upchain" publish -feed "$W/feed/updates/$FEED" "$OUT1"/*.tar.gz "$OUT1"/*.delta "$OUT1"/update-*.json || die "publishing $V1"
