@@ -788,6 +788,18 @@ func noCursor() id {
 	return hiddenCursor
 }
 
+// TakeKeyboard makes a panel that takes the keyboard only for text
+// (platform.WindowOptions.KeyboardOnlyForText) the key window, without
+// activating the app, as one of its text inputs is pressed
+// (platform.KeyboardTaker): AppKit does not, as the surface's
+// needsPanelToBecomeKey is NO, so that its other controls leave the
+// keyboard with the app the user is in.
+func (s *surface) TakeKeyboard() {
+	if w := s.w; w != nil && !w.closed && w.opts.KeyboardOnlyForText && !sendBool(w.win, "isKeyWindow") {
+		send(w.win, "makeKeyWindow")
+	}
+}
+
 func (s *surface) SetCursor(c platform.Cursor) {
 	s.cursor = c
 	if s.inside {
@@ -1207,6 +1219,11 @@ func registerSurfaceClass() {
 		}),
 		method("acceptsFirstResponder", func(self id, _ objc.SEL) bool { return true }),
 		method("acceptsFirstMouse:", func(self id, _ objc.SEL, ev id) bool { return true }),
+		// A click on a panel that becomes the key window only if needed
+		// (platform.WindowOptions.KeyboardOnlyForText, or not Focusable)
+		// leaves the keyboard where it is, until a text input is pressed
+		// (TakeKeyboard).
+		method("needsPanelToBecomeKey", func(self id, _ objc.SEL) bool { return false }),
 		method("mouseDownCanMoveWindow", func(self id, _ objc.SEL) bool { return false }),
 		method("wantsUpdateLayer", func(self id, _ objc.SEL) bool { return true }),
 		method("updateLayer", func(self id, _ objc.SEL) {

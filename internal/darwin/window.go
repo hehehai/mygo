@@ -267,6 +267,12 @@ func (w *window) create() {
 		behavior = collectionCanJoinAllSpaces | collectionFullScreenAuxiliary | collectionIgnoresCycle | collectionTransient
 		// A panel stays as the app is deactivated: the app hides it.
 		send(w.win, "setHidesOnDeactivate:", 0)
+		if o.KeyboardOnlyForText || !o.Focusable {
+			// Clicks do not take the keyboard (MyGoSurfaceView's
+			// needsPanelToBecomeKey); text inputs do (surface.TakeKeyboard)
+			// where the panel is Focusable at all (canBecomeKeyWindow).
+			send(w.win, "setBecomesKeyOnlyIfNeeded:", 1)
+		}
 	} else if w.modalToFlyout() {
 		// Where its flyout is, over another app in full screen too.
 		behavior = collectionFullScreenAuxiliary | collectionTransient
@@ -2347,10 +2353,15 @@ func registerWindowClasses() {
 	})
 
 	// A panel (WindowOptions.Panel) takes the keyboard, without
-	// activating the app, and is never the main window.
+	// activating the app, and is never the main window. One that is not
+	// Focusable (mygo.PanelKeyboardNever) never takes it: clicks reach its
+	// content and leave the app in front, and its first responder, alone.
 	classDef("MyGoPanel", "NSPanel", nil, []objc.MethodDef{
 		method("orderWindow:relativeTo:", orderWindowRelativeTo("MyGoPanel")),
-		method("canBecomeKeyWindow", func(self id, _ objc.SEL) bool { return true }),
+		method("canBecomeKeyWindow", func(self id, _ objc.SEL) bool {
+			w := theBackend.byNSWindow[self]
+			return w == nil || w.opts.Focusable
+		}),
 		method("canBecomeMainWindow", func(self id, _ objc.SEL) bool { return false }),
 		// NSPanel closes on an Escape its content leaves (cancelOperation:),
 		// past windowShouldClose: MyGo closes it then, as the user closing

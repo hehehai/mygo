@@ -1134,7 +1134,9 @@ func (w *window) Show() {
 		w.surface.uncloak()
 		defer w.surface.fillUnder()
 	}
-	if f := w.opts.Flyout; f != nil && !f.Focusable {
+	if f := w.opts.Flyout; f != nil && !f.Focusable || w.opts.Panel && !w.opts.Focusable {
+		// A flyout or a panel that never takes the keyboard
+		// (mygo.PanelKeyboardNever) shows without it.
 		procShowWindow.Call(w.hwnd, swShowNoActivate)
 		return
 	}
@@ -1172,7 +1174,7 @@ func (w *window) Focus() {
 		w.focusWebView()
 		return
 	}
-	if f := w.opts.Flyout; f != nil && !f.Focusable {
+	if f := w.opts.Flyout; f != nil && !f.Focusable || w.opts.Panel && !w.opts.Focusable {
 		w.Show() // never activated
 		return
 	}

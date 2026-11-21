@@ -859,6 +859,15 @@ func (h *windowHost) setCursor(c Cursor) { h.conn.Surface.SetCursor(platform.Cur
 
 func (h *windowHost) setTextInput(t platform.TextInputState) { h.conn.Surface.SetTextInput(t) }
 
+// takeKeyboard gives the window the keyboard, after the event being
+// handled, where the surface can (platform.KeyboardTaker: a panel that
+// takes it only for text, on macOS).
+func (h *windowHost) takeKeyboard() {
+	if k, ok := h.conn.Surface.(platform.KeyboardTaker); ok {
+		h.post(k.TakeKeyboard)
+	}
+}
+
 func (h *windowHost) updateAccessibility(tree *platform.AccessTree) {
 	h.conn.Surface.UpdateAccessibility(tree)
 }

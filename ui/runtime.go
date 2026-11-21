@@ -39,6 +39,11 @@ type host interface {
 	repaintTimer(at time.Time)
 	setCursor(Cursor)
 	setTextInput(t platform.TextInputState)
+	// takeKeyboard asks for the keyboard for a text input pressed while
+	// the window may not have it: a panel that takes the keyboard only
+	// for text does not take it by itself
+	// (mygo.WindowOptions.PanelKeyboard, PanelKeyboardForText).
+	takeKeyboard()
 	updateAccessibility(tree *platform.AccessTree)
 	readClipboard() string
 	writeClipboard(string)

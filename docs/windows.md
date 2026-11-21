@@ -660,6 +660,35 @@ mygo.App.WhenReady(func() {
 })
 ```
 
+### Panels that leave the keyboard alone
+
+Controls that float over another app, as a meeting recorder's captions
+and buttons over a video call, or a dictation HUD over the text the user
+types into, must take a click without taking the keyboard from that app.
+`PanelKeyboard` says when a panel takes it:
+
+| `PanelKeyboard` | the panel takes the keyboard | for |
+|---|---|---|
+| `PanelKeyboardAlways` (default) | as it shows, is focused or clicked | launchers, quick entry |
+| `PanelKeyboardForText` | only as a text input of its native UI is pressed; other clicks leave it where it is | floating controls with a field or two |
+| `PanelKeyboardNever` | never; its content cannot take text | HUDs, pickers |
+
+```go
+captions := mygo.NewWindow(mygo.WindowOptions{
+	Panel:         true,
+	PanelKeyboard: mygo.PanelKeyboardForText,
+	Hidden:        true,
+	Content:       view,
+})
+captions.ShowInactive() // Show and Focus would give it the keyboard
+```
+
+macOS honors both (an `NSPanel` that becomes the key window only if
+needed; one that never does for `PanelKeyboardNever`), and a panel follows
+the pointer while another app is active either way. On Windows a
+`PanelKeyboardNever` panel has `WS_EX_NOACTIVATE` and shows inactive; the
+others, and every panel on Linux, take the keyboard as by default.
+
 A panel whose results grow and shrink, as a launcher's, takes its page's
 size with `FitContent`, as [a flyout](#size-a-flyout-to-its-content)
 does: give it `MaxHeight` rather than a `Height` to pick.

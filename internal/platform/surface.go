@@ -172,6 +172,16 @@ type ImmediateFrameSurface interface {
 	FramesAtOnce()
 }
 
+// KeyboardTaker is a Surface whose window may not have taken the
+// keyboard as it was clicked: a panel that takes it only for a text input
+// (WindowOptions.KeyboardOnlyForText, macOS). Package ui calls
+// TakeKeyboard, on the main thread, after a press on a text input of its
+// content; it gives the window the keyboard, still without activating the
+// app, and does nothing where the window has it.
+type KeyboardTaker interface {
+	TakeKeyboard()
+}
+
 // MaximizeButtonSurface is a Surface whose window makes the maximize
 // button its content draws (in a window without its own, as
 // WindowOptions.HideWindowButtons) the system's for the pointer: Windows

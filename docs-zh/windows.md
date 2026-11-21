@@ -396,6 +396,28 @@ mygo.App.WhenReady(func() {
 })
 ```
 
+### 不抢键盘的面板
+
+浮在别的应用上面的控件，例如会议录制工具浮在视频通话上的字幕和按钮，或者浮在用户正在输入的文字上的听写浮窗，被点击时不能把键盘从那个应用抢走。`PanelKeyboard` 决定面板何时获得键盘：
+
+| `PanelKeyboard` | 面板何时获得键盘 | 适用 |
+|---|---|---|
+| `PanelKeyboardAlways`（默认） | 显示、获得焦点或被点击时 | 启动器、快速输入 |
+| `PanelKeyboardForText` | 只在按下其原生 UI 的文本输入框时；别处的点击不动键盘 | 带一两个输入框的浮动控件 |
+| `PanelKeyboardNever` | 从不；其内容不能接收文字 | 浮窗（HUD）、取色器 |
+
+```go
+captions := mygo.NewWindow(mygo.WindowOptions{
+	Panel:         true,
+	PanelKeyboard: mygo.PanelKeyboardForText,
+	Hidden:        true,
+	Content:       view,
+})
+captions.ShowInactive() // Show and Focus would give it the keyboard
+```
+
+macOS 两者都支持（只在需要时才成为键窗口的 `NSPanel`；`PanelKeyboardNever` 则从不成为），而且不论哪种，别的应用在前台时面板都跟随指针。Windows 上 `PanelKeyboardNever` 的面板带 `WS_EX_NOACTIVATE`，以不激活的方式显示；其他取值以及 Linux 上的所有面板，都按默认方式获得键盘。
+
 结果会变多变少的面板（如启动器的）可以用 `FitContent` 采用其页面的大小，如同[浮出窗口](#让浮出窗口适应其内容)：给它 `MaxHeight`，而不是固定的 `Height`。
 
 页面未处理（`preventDefault()`）或原生 UI 未接管的 Escape 会关闭面板，如同用户关闭它，`OnClose` 监听器可以把它变成隐藏面板，如上所述。启动器通常从一开始就是没有 Dock 图标的辅助应用：在 [`mygo.config.ts`](configuration.md) 的 `macos.infoPlist` 中给它 `LSUIElement`，或在 `App.Run` 之前设置其激活策略，如上所述。常规应用在启动时会被激活，如同用户打开的任何应用：它显示的第一个窗口（面板也一样）会把它带到前面。

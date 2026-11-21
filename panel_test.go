@@ -46,3 +46,23 @@ func TestPanelEscape(t *testing.T) {
 		t.Error("Escape did not close the panel")
 	}
 }
+
+// TestPanelKeyboard gives a panel's backend when it takes the keyboard:
+// on a text input alone (KeyboardOnlyForText), or never (not Focusable);
+// and a window that is no panel neither.
+func TestPanelKeyboard(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Panel: true, PanelKeyboard: PanelKeyboardForText})
+	if o := fw.Opts; !o.KeyboardOnlyForText || !o.Focusable {
+		t.Errorf("a panel for text: KeyboardOnlyForText %v, Focusable %v", o.KeyboardOnlyForText, o.Focusable)
+	}
+	_, fw = testWindow(t, WindowOptions{Panel: true, PanelKeyboard: PanelKeyboardNever})
+	if o := fw.Opts; o.KeyboardOnlyForText || o.Focusable || !o.Panel {
+		t.Errorf("a panel never focused: KeyboardOnlyForText %v, Focusable %v, Panel %v", o.KeyboardOnlyForText, o.Focusable, o.Panel)
+	}
+	for _, k := range []PanelKeyboard{PanelKeyboardForText, PanelKeyboardNever} {
+		_, fw = testWindow(t, WindowOptions{PanelKeyboard: k})
+		if o := fw.Opts; o.KeyboardOnlyForText || !o.Focusable {
+			t.Errorf("a window that is no panel took PanelKeyboard %d: %+v", k, o)
+		}
+	}
+}

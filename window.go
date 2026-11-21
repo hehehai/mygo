@@ -57,6 +57,32 @@ type Size struct{ Width, Height int }
 // the top-left corner of the primary display).
 type Rectangle struct{ X, Y, Width, Height int }
 
+// PanelKeyboard says when a panel (WindowOptions.Panel) takes the
+// keyboard. A panel never activates the app, whichever it is.
+type PanelKeyboard int
+
+const (
+	// PanelKeyboardAlways gives the panel the keyboard as it shows, is
+	// focused or is clicked, as a launcher's (Spotlight, Raycast).
+	PanelKeyboardAlways PanelKeyboard = iota
+	// PanelKeyboardForText gives the panel the keyboard only as a text
+	// input of its native UI is pressed: a click elsewhere on it, as on a
+	// button, leaves the keyboard with the app the user is in, as the
+	// controls and captions that float over a video call do, so the user
+	// can press them without losing their place in what they type. Show it
+	// with ShowInactive (Show and Focus give it the keyboard). macOS;
+	// elsewhere it is PanelKeyboardAlways.
+	PanelKeyboardForText
+	// PanelKeyboardNever makes a panel that never takes the keyboard: a
+	// press on it reaches its content while the app in front keeps the
+	// focus and its caret, as a floating HUD over the text the user types
+	// into (dictation, a color picker) needs. Its content cannot take the
+	// keyboard: no text inputs. On macOS the panel never becomes the key or
+	// main window; on Windows it has WS_EX_NOACTIVATE; Linux takes it as
+	// PanelKeyboardAlways.
+	PanelKeyboardNever
+)
+
 // WindowOptions configures NewWindow. The zero value is a visible,
 // resizable 800x600 window centered on screen.
 type WindowOptions struct {
@@ -204,8 +230,14 @@ type WindowOptions struct {
 	// app switcher. It cannot be minimized, maximized or go full screen. On
 	// macOS, showing or focusing it gives it the keyboard without
 	// activating the app, so the app the user was in stays active and gets
-	// the keyboard back when the panel hides.
+	// the keyboard back when the panel hides. PanelKeyboard tells when it
+	// takes the keyboard.
 	Panel bool
+	// PanelKeyboard says when a Panel takes the keyboard: as it shows and
+	// as it is clicked (PanelKeyboardAlways, the default), only as a text
+	// input of its native UI is pressed (PanelKeyboardForText), or never
+	// (PanelKeyboardNever). It changes nothing without Panel.
+	PanelKeyboard PanelKeyboard
 
 	// Page configures the window's web page.
 	Page PageOptions
@@ -782,6 +814,12 @@ func (w *Window) platformOptions(o *WindowOptions) *platform.WindowOptions {
 	if o.Panel {
 		p.Minimizable, p.Maximizable, p.Fullscreenable = false, false, false
 		p.AlwaysOnTop, p.SkipTaskbar = true, true
+		switch o.PanelKeyboard {
+		case PanelKeyboardForText:
+			p.KeyboardOnlyForText = true
+		case PanelKeyboardNever:
+			p.Focusable = false
+		}
 	}
 	if p.Title == "" {
 		p.Title = App.Name()

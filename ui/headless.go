@@ -43,6 +43,9 @@ type headless struct {
 	opened        []string
 	// escapes counts the Escapes nothing handled.
 	escapes int
+	// keyboardTakes counts the presses of text inputs that asked the
+	// window for the keyboard (takeKeyboard).
+	keyboardTakes int
 	// stack is the system's stack of screens tests give the window.
 	stack platform.StackSurface
 	// titleDoubles counts the double clicks a DragWindow handle left to
@@ -136,6 +139,7 @@ func (h *headless) requestFrame()                              { h.requested.Sto
 func (h *headless) repaintTimer(at time.Time)                  { h.repaintAt = at }
 func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
+func (h *headless) takeKeyboard()                              { h.keyboardTakes++ }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
 func (h *headless) startDrag()                                 {}
 func (h *headless) setDropFormats([]transfer.Format)           {}

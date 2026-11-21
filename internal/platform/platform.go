@@ -463,6 +463,11 @@ type WindowOptions struct {
 	// ones included, out of the taskbar and the app switcher, and on macOS
 	// takes the keyboard without activating the app.
 	Panel bool
+	// KeyboardOnlyForText keeps clicks on a Panel from giving it the
+	// keyboard, but those on a text input of its content, which ask for it
+	// (KeyboardTaker; mygo.PanelKeyboardForText). A Panel that never takes
+	// the keyboard (mygo.PanelKeyboardNever) is one that is not Focusable.
+	KeyboardOnlyForText bool
 
 	// UserScripts are injected into every page, in order.
 	UserScripts []UserScript
