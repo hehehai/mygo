@@ -135,6 +135,11 @@ func (shell) ShowItemInFolder(path string) {
 	})
 }
 
+// TrashesOnAnyThread: NSFileManager's defaultManager may be used on any
+// thread (withPool locks the goroutine to its thread for the pool), for
+// TrashItem and TrashItemResult (platform.AnyThreadTrash).
+func (shell) TrashesOnAnyThread() {}
+
 func (shell) TrashItem(path string) error {
 	var err error
 	withPool(func() {

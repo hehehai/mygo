@@ -1282,6 +1282,13 @@ type LaterClipboard interface {
 	WriteTextThen(text string, done func(error))
 }
 
+// AnyThreadTrash is a Shell whose TrashItem and TrashItemResult may be
+// called on any thread: mygo.Shell.TrashItem then calls it where it is
+// called, without waiting for the main thread.
+type AnyThreadTrash interface {
+	TrashesOnAnyThread()
+}
+
 // Shell integrates with the desktop environment.
 type Shell interface {
 	OpenExternal(url string) error
