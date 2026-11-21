@@ -9,8 +9,9 @@
 #   --v1 VERSION         the next beta (default: the old one + 1, e.g. 0.1.0-beta.10)
 #   --v2 VERSION         the release after it (default: the old one's, e.g. 0.1.0)
 #   --new-style STYLE    url-beta or prereleases (default: apps.conf)
-#   --fork-rev REV       the fork's commit to build the new versions with (default: HEAD)
-#   --worktree           the fork's working tree instead, uncommitted changes too
+#   --fork-rev REV       the fork's commit to build the new versions with
+#                        (default: HEAD; it must be pushed to github.com/hehehai/mygo,
+#                        which the Mac fetches it from)
 #   --keep               keep the run's files on the Mac
 #   --host HOST          the Mac (default: mac-air)
 #
@@ -25,14 +26,13 @@ host=mac-air
 app=${1:?usage: upchain.sh <App> <old tag> [options]}
 tag=${2:?usage: upchain.sh <App> <old tag> [options]}
 shift 2
-v1="" v2="" new_style="" rev=HEAD worktree=false keep=0
+v1="" v2="" new_style="" rev=HEAD keep=0
 while [ $# -gt 0 ]; do
   case $1 in
     --v1) v1=$2; shift ;;
     --v2) v2=$2; shift ;;
     --new-style) new_style=$2; shift ;;
     --fork-rev) rev=$2; shift ;;
-    --worktree) worktree=true ;;
     --keep) keep=1 ;;
     --host) host=$2; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
@@ -66,23 +66,31 @@ fi
 id="$feed-$tag-$(date +%m%d-%H%M%S)"
 stage=$(mktemp -d "/tmp/upchain-$id.XXXX")
 trap 'rm -rf "$stage"' EXIT
-mkdir -p "$stage/old" "$stage/fork"
-set -o pipefail
-# The app's vendored MyGo at the tag, as it is.
-git -C "$repo" archive "$tag" third_party/mygo | tar -x -C "$stage/old" --strip-components=2
-[ -f "$stage/old/go.mod" ] || { echo "$app $tag has no third_party/mygo" >&2; exit 2; }
-# The fork.
-if $worktree; then
-  rsync -a --exclude .git --exclude node_modules --exclude /docs --exclude /docs-zh --exclude /website \
-    --exclude /benchmarks --exclude /examples --exclude upchain-out "$fork/" "$stage/fork/"
-  forkdesc="$(git -C "$fork" rev-parse --short HEAD) + working tree"
-else
-  git -C "$fork" archive "$rev" | tar -x -C "$stage/fork" --anchored --exclude docs --exclude docs-zh --exclude website --exclude benchmarks --exclude examples
-  forkdesc=$(git -C "$fork" rev-parse --short "$rev")
-fi
+mkdir -p "$stage/old" "$stage/full"
+# The app's vendored MyGo at the tag, as it is: only the files of the
+# packages the probe and cmd/mygo build from (uploads to the Mac are slow).
+git -C "$repo" archive "$tag" third_party/mygo | tar -x -C "$stage/full" --strip-components=2
+[ -f "$stage/full/go.mod" ] || { echo "$app $tag has no third_party/mygo" >&2; exit 2; }
+(
+  cd "$stage/full"
+  export GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 GOFLAGS=-mod=mod
+  go list -deps -f '{{if .Module}}{{if eq .Module.Path "github.com/egoist/mygo"}}{{.Dir}}|{{join .EmbedFiles "|"}}{{end}}{{end}}' . ./cmd/mygo
+) | while IFS='|' read -r dir embeds; do
+  rel=${dir#"$stage/full"}; rel=${rel#/}
+  mkdir -p "$stage/old/$rel"
+  find "$dir" -maxdepth 1 -type f ! -name '*_test.go' -exec cp {} "$stage/old/$rel/" \;
+  for e in $embeds; do [ -n "$e" ] && mkdir -p "$(dirname "$stage/old/$rel/$e")" && cp "$dir/$e" "$stage/old/$rel/$e"; done
+done
+cp "$stage/full/go.mod" "$stage/full/go.sum" "$stage/old/"
+grep -q 'func VerifyRelease' "$stage/full/internal/update/"*.go && has_release=1 || has_release=0
+grep -q 'func (u \*UpdaterModule) SetPrereleases' "$stage/full/"updater*.go && has_pre=1 || has_pre=0
+rm -rf "$stage/full"
+# The fork: a commit on GitHub, which the Mac fetches.
+sha=$(git -C "$fork" rev-parse "$rev^{commit}")
+git -C "$fork" fetch -q origin
+git -C "$fork" branch -r --contains "$sha" | grep -q 'origin/' || { echo "$rev ($sha) is not pushed to origin: push it first" >&2; exit 2; }
+forkdesc=$(git -C "$fork" rev-parse --short "$sha")
 cp -r "$here" "$stage/upchain"
-has_release=0
-grep -q 'func VerifyRelease' "$stage/old/internal/update/"*.go && has_release=1
 platform=${target/-//}
 cat >"$stage/run.env" <<EOF
 APP=$app
@@ -96,29 +104,24 @@ V2=$v2
 OLD_STYLE=$old_style
 NEW_STYLE=$new_style
 OLD_HAS_RELEASE=$has_release
+OLD_HAS_PRE=$has_pre
+FORK_SHA=$sha
 KEEP=$keep
 EOF
 echo "upchain $id: $app $tag ($old, $old_style) → $v1 → $v2 (fork $forkdesc, $new_style) on $host"
 
 root="code/mygo-upd/upchain"
 remote="$root/$id"
-# The trees go to a cache on the Mac, by content, each sent against the
-# newest one already there (rsync's --link-dest: only what changed crosses
-# the network); mac.sh copies them into the run.
-forkkey="fork-$(cd "$stage/fork" && find . -type f -print0 | sort -z | xargs -0 sha1sum | sha1sum | cut -c1-12)"
+# The old tree goes to a cache on the Mac (once per app and tag); the fork
+# is fetched there from GitHub by mac.sh.
 oldkey="old-$feed-$tag"
 ssh_mac() { ssh -o BatchMode=yes -o ConnectTimeout=60 -o ServerAliveInterval=30 "$host" "$@"; }
-sync_cache() { # sync_cache <local dir> <key> <kind>
-  local base
-  base=$(ssh_mac "cd '$root/cache' 2>/dev/null && ls -td $3-*/ 2>/dev/null | head -1" || true)
-  if ssh_mac "test -f '$root/cache/$2/.complete'"; then return; fi
-  rsync -a --delete --timeout=300 ${base:+--link-dest="../${base%/}"} "$1/" "$host:$root/cache/$2/"
-  ssh_mac "touch '$root/cache/$2/.complete'; cd '$root/cache' && ls -td $3-*/ | tail -n +5 | xargs rm -rf"
-}
 ssh_mac "mkdir -p '$remote' '$root/cache'"
-sync_cache "$stage/fork" "$forkkey" fork
-sync_cache "$stage/old" "$oldkey" old
-printf 'FORK_CACHE=%s\nOLD_CACHE=%s\n' "../cache/$forkkey" "../cache/$oldkey" >>"$stage/run.env"
+if ! ssh_mac "test -f '$root/cache/$oldkey/.complete'"; then
+  rsync -a --delete --timeout=300 "$stage/old/" "$host:$root/cache/$oldkey/"
+  ssh_mac "touch '$root/cache/$oldkey/.complete'"
+fi
+printf 'OLD_CACHE=%s\n' "../cache/$oldkey" >>"$stage/run.env"
 rsync -a --timeout=300 "$stage/upchain" "$stage/run.env" "$host:$remote/"
 status=0
 # lockf: one Mac test at a time; setpgrp: the run's own process group,
