@@ -144,11 +144,15 @@ func (e *node) layoutInput(cw, ch float32) {
 // placeholderParams lays out the placeholder of an empty input in a
 // content box width wide: in the input's style, its line height too, fixed
 // or not. A text area's placeholder wraps; a single-line input's stays on
-// its line, cut off at the box.
+// its line, ending in "…" at the box (its padding may hold buttons drawn
+// over the input, as a search field's).
 func (e *node) placeholderParams(width float32) text.Params {
 	ed := e.st.editor
 	params := e.textParams(width)
 	params.Text, params.Spans, params.MaxLines, params.NoWrap, params.Ellipsis = ed.placeholder, "", 0, !ed.multiline, ""
+	if !ed.multiline {
+		params.MaxLines, params.NoWrap, params.Ellipsis = 1, false, "…"
+	}
 	return params
 }
 
@@ -161,6 +165,11 @@ func (e *node) paintInput(p *Painter) {
 	}
 	box := e.contentBox()
 	clip := Rect{e.x + e.border[3], e.y + e.border[0], e.w - e.border[1] - e.border[3], e.h - e.border[0] - e.border[2]}
+	if ed.area == nil {
+		// A single line shows in its content box (and the caret just past
+		// it): its padding may hold buttons drawn over the input.
+		clip.X, clip.W = e.x+e.contentX()-1, box.W+2
+	}
 	saved := p.clip
 	p.pushClip(clip, [4]float32{})
 	ox, oy := e.x+ed.originX-ed.scrollX, e.y+ed.originY
