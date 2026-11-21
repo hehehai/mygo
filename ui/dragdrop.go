@@ -384,7 +384,7 @@ func (rt *engine) paintDrag(p *Painter, w, h float32) {
 		bw := max(tw+10, th+4)
 		// Beside the pointer, as the copy may be wider than the window.
 		x, y := rt.pointerX+10, rt.pointerY-th-14
-		p.Fill(Rect{x, y, bw, th + 4}, t.Accent, (th+4)/2)
+		p.Fill(Rect{x, y, bw, th + 4}, t.AccentFill(), (th+4)/2)
 		p.RichText(x+(bw-tw)/2, y+2, 0, label)
 	}
 	p.opacity, p.clip, p.theme, e.opacitySet, p.copying = saved, savedClip, savedTheme, dimmed, copying

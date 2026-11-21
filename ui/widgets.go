@@ -157,7 +157,7 @@ func styleButton(c *context, b *node, primary bool) {
 	base, hover, pressed, fg, border := t.Surface, t.SurfaceHover, t.SurfacePressed, t.Text, t.Border
 	switch {
 	case primary && c.emphasized(t):
-		base, hover, pressed, fg, border = t.Accent, t.AccentHover, t.AccentPressed, t.AccentText, Color{}
+		base, hover, pressed, fg, border = t.AccentFill(), t.AccentHover, t.AccentPressed, t.AccentText, Color{}
 	case primary:
 		// As other buttons in a window not drawn as active, as AppKit's
 		// default button: its border inside the padding, so that it is as
@@ -267,7 +267,7 @@ func coreRadio[T comparable](c *context, selected *T, value T, label string) *no
 	row.Children(func() {
 		dot := coreBox(c).Size(t.Space(4), t.Space(4)).Radius(t.Space(2)).Shrink(0)
 		if on {
-			dot.Background(c.accent(t))
+			dot.Background(c.accentFill(t))
 		} else {
 			dot.Background(t.Background).Border(1, t.Border.Mix(t.Text, 0.25))
 		}
@@ -733,7 +733,7 @@ func coreSelect(c *context, selected *string, options []string) *node {
 			item := sel.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius)
 			switch {
 			case item.Highlighted():
-				item.Background(t.Accent).TextColor(t.AccentText)
+				item.Background(t.AccentFill()).TextColor(t.AccentText)
 			case opt == *selected:
 				item.Background(t.Surface)
 			}

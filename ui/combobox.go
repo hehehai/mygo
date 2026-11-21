@@ -297,7 +297,7 @@ func styleOptions(c *context, p *comboboxParts, options []string) *node {
 		for _, opt := range options {
 			item := p.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius)
 			if item.Highlighted() {
-				item.Background(t.Accent).TextColor(t.AccentText)
+				item.Background(t.AccentFill()).TextColor(t.AccentText)
 			}
 			item.Children(func() { coreText(c, opt).SingleLine() })
 		}

@@ -73,7 +73,7 @@ func coreCheckboxGroup(c *context, label string, fn func()) *node {
 func paintCheckbox(c *context, row, box *node, state int8) {
 	t := c.theme
 	if state > 1 {
-		box.Background(c.accent(t))
+		box.Background(c.accentFill(t))
 	} else {
 		box.Background(t.Background).Border(1, t.Border.Mix(t.Text, 0.25))
 	}

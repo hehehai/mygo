@@ -1309,10 +1309,10 @@ func (m *menuParts) drawnItem(d *drawnMenu, it *platform.MenuItem, mi *MenuItem,
 		row.Background(t.SurfaceHover).TextColor(color)
 	case row.highlighted:
 		color, muted = t.AccentText, t.AccentText
-		if mi.danger && legibleOn(t.Danger, t.Accent, t.AccentText) {
+		if mi.danger && legibleOn(t.Danger, t.AccentFill(), t.AccentText) {
 			color = t.Danger
 		}
-		row.Background(t.Accent).TextColor(color)
+		row.Background(t.AccentFill()).TextColor(color)
 	case mi.danger:
 		row.TextColor(color)
 	}

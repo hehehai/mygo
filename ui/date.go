@@ -264,7 +264,7 @@ func calendarGrid(c *context, grid *node, date, cursor *time.Time, moveChooses b
 					}
 					switch {
 					case chosen:
-						cell.Background(c.accent(t))
+						cell.Background(c.accentFill(t))
 						fg = t.AccentText
 					case atCursor:
 						cell.Background(t.SurfaceHover)

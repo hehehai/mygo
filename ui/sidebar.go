@@ -185,7 +185,7 @@ func coreSidebarItem(c *context, id string, icon *SVG, label string) *node {
 	switch {
 	case chosen && focused:
 		item.checked = 2
-		item.Background(t.Accent).TextColor(t.AccentText)
+		item.Background(t.AccentFill()).TextColor(t.AccentText)
 		iconColor = t.AccentText
 	case chosen:
 		// Chosen in a sidebar without the focus, in gray, as AppKit's.

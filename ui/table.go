@@ -279,7 +279,7 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 				at := k == cur && *s.cursor() == c.row.i
 				box.checked = 1 + int8(b2f(on))
 				style := s.CellsStyle
-				bg, fg := c.accent(t), t.AccentText
+				bg, fg := c.accentFill(t), t.AccentText
 				if style.Cell != Transparent {
 					bg = style.Cell
 				}
@@ -730,6 +730,6 @@ func (e *node) Selected(on bool) *node {
 	}
 	t := e.theme()
 	e.checked = 2
-	e.Background(e.c.accent(t)).TextColor(t.AccentText)
+	e.Background(e.c.accentFill(t)).TextColor(t.AccentText)
 	return e
 }

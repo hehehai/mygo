@@ -27,7 +27,8 @@ type Theme struct {
 	Text      Color
 	TextMuted Color
 	// Accent colors primary buttons, checked controls and focus rings;
-	// AccentText is text on it.
+	// AccentText is text on it. Where Accent is too light for AccentText
+	// to read on, SetAccentFill gives what carries it a darker fill.
 	Accent        Color
 	AccentHover   Color
 	AccentPressed Color
@@ -90,6 +91,34 @@ type Theme struct {
 
 	// followed is what WithPreferences changed, nil where it has not.
 	followed *followedTheme
+
+	// accentFill fills what carries AccentText while Accent is
+	// accentFillOf (SetAccentFill).
+	accentFill, accentFillOf Color
+}
+
+// SetAccentFill makes fill the face of what carries AccentText on the
+// accent — the highlighted option of a Select, Combobox or PopoverMenu,
+// a chosen row of a list, table or sidebar, a primary button, a checked
+// box or radio, a chosen day or time field, the count of rows dragged —
+// while Accent stays the colour of rings, progress, sliders, switches,
+// tabs and links: a mid-tone accent such as teal, on which white text
+// falls short of 4.5:1, gets a slightly darker fill white reads on. Set
+// Accent first: a copy of the theme given another Accent (a section of
+// the view recoloured, or the desktop's accent by WithPreferences) fills
+// with that Accent again. AccentHover and AccentPressed are a primary
+// button's under the pointer and pressed: derive them from fill. In a
+// window not drawn as active the fill fades as the accent does
+// (InactiveAccent).
+func (t *Theme) SetAccentFill(fill Color) { t.accentFill, t.accentFillOf = fill, t.Accent }
+
+// AccentFill is the face of what carries AccentText: SetAccentFill's
+// fill while Accent is the one it was set for, else Accent.
+func (t *Theme) AccentFill() Color {
+	if t.accentFill.A > 0 && t.accentFillOf == t.Accent {
+		return t.accentFill
+	}
+	return t.Accent
 }
 
 // followedTheme is a theme before and after following the desktop's
