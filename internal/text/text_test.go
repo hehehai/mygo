@@ -1318,6 +1318,69 @@ func TestRegisterFont(t *testing.T) {
 	}
 }
 
+// The rendering SetDefaultFontRendering sets is that of the systems New
+// makes from then on, as a Recorder's.
+func TestDefaultFontRenderingOfNewSystems(t *testing.T) {
+	prev := defaultRendering.Load()
+	t.Cleanup(func() { defaultRendering.Store(prev) })
+	defaultRendering.Store(nil)
+	if s := New(); s.rendering != nil {
+		t.Errorf("without a default: rendering %v", *s.rendering)
+	}
+	defaultRendering.Store(&[3]string{"gray", "none", ""})
+	s := New()
+	if s.rendering == nil || *s.rendering != [3]string{"gray", "none", ""} {
+		t.Fatalf("rendering %v, want the default", s.rendering)
+	}
+	// Each its own: setting one's leaves the default.
+	s.SetFontRendering("subpixel", "full", "rgb")
+	if r := *New().rendering; r != [3]string{"gray", "none", ""} {
+		t.Errorf("a new system's rendering %v after another set its own", r)
+	}
+}
+
+// A released System's engine goes to the next System New makes with the
+// same settings, which lays out as with an engine of its own; one with
+// other settings starts its own; Shared keeps its engine.
+func TestReleasedEngineReused(t *testing.T) {
+	p := Params{Text: "Hello, world 你好", Style: Style{Size: 16}}
+	a := New()
+	want := a.Layout(p).Width
+	eng := a.eng
+	a.Release()
+	if a.eng != nil {
+		t.Fatal("a released system kept its engine")
+	}
+	b := New()
+	if got := b.Layout(p).Width; got != want {
+		t.Errorf("width %g with a released engine, want %g", got, want)
+	}
+	if b.eng != eng {
+		t.Error("the next system started an engine of its own")
+	}
+	b.Release()
+	c := New()
+	c.SetUIFamily("MyGo Test Other UI")
+	c.Layout(p)
+	if c.eng == eng {
+		t.Error("a system of other settings took a released engine")
+	}
+	c.Release()
+	// The engine c released stays for systems of its settings.
+	d := New()
+	d.Layout(p)
+	if d.eng != eng {
+		t.Error("the released engine of the same settings was not taken")
+	}
+	sh := Shared()
+	sh.Layout(p)
+	shared := sh.eng
+	sh.Release()
+	if sh.eng != shared {
+		t.Error("Shared let its engine go")
+	}
+}
+
 // An app's fonts (RegisterAppFont) reach Shared and every System New
 // makes, as a Tester's window has: one made before them takes them at its
 // next layout, one made after before its first. Go Mono is monospaced, so

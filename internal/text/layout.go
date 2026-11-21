@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unsafe"
 
@@ -539,7 +540,7 @@ type cached struct {
 var shared = sync.OnceValue(newSystem)
 
 func newSystem() *System {
-	return &System{
+	s := &System{
 		fonts:     map[Style]*Font{},
 		layouts:   map[Params]*cached{},
 		marks:     map[markKey]float32{},
@@ -554,6 +555,24 @@ func newSystem() *System {
 		// transparent texel until one asks for room.
 		ColorAtlas: scene.NewAtlas(4, 1, 1),
 	}
+	if r := defaultRendering.Load(); r != nil {
+		c := *r
+		s.rendering = &c
+	}
+	return s
+}
+
+// defaultRendering is the rendering of the systems made from now on
+// (SetDefaultFontRendering), nil for the engines' own.
+var defaultRendering atomic.Pointer[[3]string]
+
+// SetDefaultFontRendering sets the rendering (SetFontRendering) of the
+// shared system and of the systems made from now on, as windows' and
+// recorders' are, until a window takes the desktop's.
+func SetDefaultFontRendering(antialias, hinting, subpixels string) {
+	r := [3]string{antialias, hinting, subpixels}
+	defaultRendering.Store(&r)
+	Shared().SetFontRendering(antialias, hinting, subpixels)
 }
 
 // Shared returns the process-wide text system.
@@ -602,6 +621,8 @@ func (s *System) takeAppFonts() {
 	if !s.apart {
 		return
 	}
+	// A released engine has some already.
+	s.takeReleased()
 	appFonts.mu.Lock()
 	fonts := appFonts.fonts[s.appFonts:]
 	s.appFonts = len(appFonts.fonts)
@@ -616,8 +637,88 @@ func (s *System) takeAppFonts() {
 	s.fontsChanged()
 }
 
-// engine starts the system's text engine on first use.
+// releasedEngines keeps the engines of released systems (Release) for
+// the systems New makes next. An engine is costly to start and is never
+// closed: Pango's font map starts a thread of its own, and the app's
+// fonts are added to fontconfig again for each. A process that made a
+// Recorder for each still (plugins/render) grew a thread and fontconfig's
+// font set each time, until loading a font took minutes.
+var releasedEngines struct {
+	mu   sync.Mutex
+	free []releasedEngine
+}
+
+// releasedEngine is an engine a System released, with what that System
+// gave it: the family system-ui stands for, the rendering (nil for the
+// engine's own) and how many of the app's fonts it registered.
+type releasedEngine struct {
+	eng       engine
+	uiFamily  string
+	rendering *[3]string
+	appFonts  int
+}
+
+// Release gives the text engine of a System New made to the next System
+// New makes with the same settings (SetUIFamily, SetFontRendering), as a
+// Recorder does as it closes: the engine is not started again and keeps
+// the app's fonts it has. The System lets go of its layouts and fonts and
+// should not be used after; if it is, it starts or takes another engine.
+// The shared System keeps its engine.
+func (s *System) Release() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.apart || s.eng == nil {
+		return
+	}
+	r := releasedEngine{eng: s.eng, uiFamily: s.uiFamily, rendering: s.rendering, appFonts: s.appFonts}
+	// What this System made with the engine is the next one's no more:
+	// the Fonts go once nothing draws them (releaseFonts), what shaping
+	// kept goes now.
+	s.gen++
+	s.clearLayouts()
+	clear(s.marks)
+	clear(s.fonts)
+	clear(s.glyphs)
+	clear(s.places)
+	clear(s.runs)
+	if f, ok := s.eng.(fontForgetter); ok {
+		f.forgetFonts()
+	}
+	if k, ok := s.eng.(shapingKeeper); ok {
+		k.releaseShaping()
+	}
+	s.eng, s.appFonts = nil, 0
+	releasedEngines.mu.Lock()
+	releasedEngines.free = append(releasedEngines.free, r)
+	releasedEngines.mu.Unlock()
+}
+
+// takeReleased gives a System New made that has no engine yet one a
+// released System left with the same settings, if there is one, with
+// the app's fonts it registered. s.mu is held.
+func (s *System) takeReleased() {
+	if s.eng != nil || !s.apart {
+		return
+	}
+	releasedEngines.mu.Lock()
+	defer releasedEngines.mu.Unlock()
+	free := releasedEngines.free
+	for i := len(free) - 1; i >= 0; i-- {
+		r := free[i]
+		if r.uiFamily != s.uiFamily || (r.rendering == nil) != (s.rendering == nil) ||
+			r.rendering != nil && *r.rendering != *s.rendering {
+			continue
+		}
+		s.eng, s.appFonts = r.eng, r.appFonts
+		releasedEngines.free = slices.Delete(free, i, i+1)
+		return
+	}
+}
+
+// engine starts the system's text engine on first use, or takes one a
+// released System left (Release).
 func (s *System) engine() engine {
+	s.takeReleased()
 	if s.eng == nil {
 		s.eng = newEngine()
 		if u, ok := s.eng.(uiFamilySetter); ok {

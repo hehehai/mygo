@@ -183,6 +183,11 @@ type Options struct {
 	// FFmpeg is the path of ffmpeg for the FFmpeg Encoder, "ffmpeg" from
 	// PATH when empty.
 	FFmpeg string
+	// Silent tells Video that the frames play no sound (Frame.Audio), so
+	// that it does not build them all once more, before drawing them, to
+	// hear it: a video without sound renders in the time of one pass.
+	// Sound the frames play anyway is left out.
+	Silent bool
 	// Quality is that of the JPEGs of Images, from 1 to 100, 90 when
 	// zero.
 	Quality int

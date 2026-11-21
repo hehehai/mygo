@@ -5,11 +5,17 @@ package text
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/goregular"
+	"golang.org/x/image/font/sfnt"
+	"golang.org/x/image/math/fixed"
 )
 
 // Punctuation and full-width forms in a language that writes Han get the
@@ -128,6 +134,64 @@ func TestPangoLayoutAtMeasuredWidthWithLetterSpacing(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Hinted, Pango rounds advances to whole pixels; unhinted
+// (SetFontRendering hinting "none") it lays text out as browsers and Core
+// Text do, in fractions of a pixel, so that text measures alike on every
+// system.
+func TestUnhintedAdvancesUnrounded(t *testing.T) {
+	s := newSystem()
+	if err := s.RegisterFont(goregular.TTF, "MyGo Test Unhinted"); err != nil {
+		t.Fatal(err)
+	}
+	p := Params{Text: "Hamburgefontsiv quick brown fox", Style: Style{Family: "MyGo Test Unhinted", Size: 13}}
+	fractions := func() (n int, width float32) {
+		for _, g := range s.Layout(p).Lines[0].Glyphs {
+			if g.Advance != float32(math.Round(float64(g.Advance))) {
+				n++
+			}
+			width += g.Advance
+		}
+		return n, width
+	}
+	s.SetFontRendering("gray", "slight", "")
+	if n, _ := fractions(); n != 0 {
+		t.Errorf("hinted: %d advances of a fraction of a pixel", n)
+	}
+	s.SetFontRendering("gray", "none", "")
+	n, width := fractions()
+	if n == 0 {
+		t.Error("unhinted: every advance is of whole pixels")
+	}
+	// Go Regular's own advances, at 13 px of its 2048 units an em.
+	var want float32
+	for _, r := range p.Text {
+		want += float32(goRegularAdvance(t, r)) * 13 / 2048
+	}
+	if math.Abs(float64(width-want)) > 0.05 {
+		t.Errorf("unhinted: a width of %g, want the font's %g", width, want)
+	}
+}
+
+// goRegularAdvance returns the advance of r's glyph in Go Regular, in
+// font units.
+func goRegularAdvance(t *testing.T, r rune) int {
+	t.Helper()
+	f, err := sfnt.Parse(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b sfnt.Buffer
+	i, err := f.GlyphIndex(&b, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := f.GlyphAdvance(&b, i, fixed.I(int(f.UnitsPerEm())), font.HintingNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a.Round()
 }
 
 // Goroutines that write the same font to the cache at once each find the

@@ -153,7 +153,7 @@ func (r *Recorder) runLater() {
 func (r *Recorder) Size() (w, h int) { return r.rt.pixels(r.h.w, r.h.h, r.h.scale) }
 
 // Close drops what the view keeps, its states and Locals, and the last
-// frame.
+// frame. Its text engine goes to the next Recorder made.
 func (r *Recorder) Close() {
 	if r.closed {
 		return
@@ -161,6 +161,11 @@ func (r *Recorder) Close() {
 	r.closed = true
 	r.rt.close()
 	r.h.last = nil
+	// Its text engine goes to the next Recorder's text system, rather
+	// than a new one starting for each (a thread of its own with Pango).
+	if r.h.text != nil {
+		r.h.text.Release()
+	}
 }
 
 var _ host = recordHost{}
