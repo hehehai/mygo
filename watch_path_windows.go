@@ -8,6 +8,10 @@ import (
 	"syscall"
 )
 
+// fileWatchHoldsRoot: a watch keeps the anchored handle of its directory
+// (fileWatchOpenRoot) for as long as it runs.
+const fileWatchHoldsRoot = true
+
 // OpenRoot uses an ordinary Windows handle that prevents deletion and rename.
 // Root.OpenRoot shares deletion, so retain that anchored handle instead and
 // release the temporary parent before returning. A drive's root has no

@@ -40,6 +40,15 @@ func Negotiate(source, destination, suggested Operation) Operation {
 // DragOptions configures a native source. The default operation is copy.
 type DragOptions struct {
 	Operations Operation
+	// Local is what the drag offers the windows of this process (none:
+	// Operations); other apps get Operations only. A source whose files
+	// must not leave where they are (a file manager moves a file it is
+	// offered a move for) offers them Copy, and its own windows Copy|Move
+	// too, which tell by the effect they answer (Element.DropEffect) what
+	// a drop does — the pointer shows it. Where the platform cannot tell
+	// the process's own windows from other apps' the drag offers
+	// Operations everywhere (only macOS tells them).
+	Local Operation
 	// Preview is copied at drag start. Hotspot is in image pixels; the
 	// preview is displayed in DIPs (one pixel per DIP).
 	Preview image.Image
@@ -48,6 +57,15 @@ type DragOptions struct {
 	// startup failure and source-window destruction. Delete or remove the
 	// original only after a successful Move; MyGo never deletes files.
 	Done func(Result)
+}
+
+// LocalOperations is what the drag offers the windows of this process
+// (Local, else Operations), the safe default supplied.
+func (o DragOptions) LocalOperations() Operation {
+	if o.Local != None {
+		return o.Local.Allowed()
+	}
+	return o.Operations.Allowed()
 }
 
 // Result reports the destination's final effect. None means no drop.

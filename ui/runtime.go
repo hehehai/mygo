@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"os"
 	"slices"
 	"sync"
@@ -54,6 +55,9 @@ type host interface {
 	startDrag()
 	startDataDrag(transfer.Data, any, transfer.DragOptions, float32, float32) error
 	cancelDataDrag()
+	// setDataDragPreview shows img, the point hot under the pointer, as
+	// the preview of the native drag the window started, while it lasts.
+	setDataDragPreview(img image.Image, hot image.Point)
 	setDropFormats([]transfer.Format)
 	titleBarDoubleClicked()
 	// setMaximizeButton tells where the view shows the window's maximize
@@ -576,6 +580,8 @@ type engine struct {
 	live liveState
 	// stats measures frames for MYGO_FRAME_STATS, nil when it is unset.
 	stats *frameStats
+	// dropOverX and dropOverY are where files dragged over the window are.
+	dropOverX, dropOverY float32
 	// dropOver is the element files are dragged over; access is true once
 	// assistive technology asked for the content, and accessNodes is how
 	// many nodes the last frame's tree had.

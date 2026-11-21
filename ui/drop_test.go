@@ -52,3 +52,39 @@ func (t *Tester) send2(ev platform.SurfaceEvent) bool {
 	t.settle()
 	return taken
 }
+
+func TestFileDropPosition(t *testing.T) {
+	var files []string
+	var dx, dy, ox, oy float32
+	over := false
+	tt := coreNewTester(func(c *context) {
+		coreColumn(c).Fill().Children(func() {
+			coreBox(c).Size(200, 50)
+			zone := coreBox(c).Size(200, 100)
+			if f, x, y := zone.DroppedFilesAt(); f != nil {
+				files, dx, dy = f, x, y
+			}
+			ox, oy, over = zone.FileDragAt()
+		})
+	}, 300, 300)
+	tt.Frame()
+	tt.DragFiles(40, 80)
+	if !over || ox != 40 || oy != 30 {
+		t.Errorf("dragged over at (%v, %v) %v, want (40, 30) true", ox, oy, over)
+	}
+	tt.DragFiles(70, 90)
+	if !over || ox != 70 || oy != 40 {
+		t.Errorf("dragged on to (%v, %v) %v, want (70, 40) true", ox, oy, over)
+	}
+	if !tt.DropFiles(120, 60, "/tmp/a.wav") {
+		t.Error("the zone did not take the dropped file")
+	}
+	if !slices.Equal(files, []string{"/tmp/a.wav"}) || dx != 120 || dy != 10 || over {
+		t.Errorf("dropped %q at (%v, %v), over %v; want /tmp/a.wav at (120, 10)", files, dx, dy, over)
+	}
+	tt.DragFiles(70, 90)
+	tt.DragFiles(-1, -1)
+	if over {
+		t.Error("the files left but the zone shows them")
+	}
+}

@@ -32,11 +32,12 @@ func (w *Window) attachContent(content Content) {
 		panic("mygo: the backend " + backend().Name() + " created no surface for the window's Content")
 	}
 	w.conn = &surface.Conn{
-		Surface:        s,
-		Window:         w,
-		Clipboard:      backend().Clipboard(),
-		StartDataDrag:  w.startDataDrag,
-		CancelDataDrag: w.cancelDataDrag,
+		Surface:            s,
+		Window:             w,
+		Clipboard:          backend().Clipboard(),
+		StartDataDrag:      w.startDataDrag,
+		CancelDataDrag:     w.cancelDataDrag,
+		SetDataDragPreview: w.setDataDragPreview,
 		StartDrag: func() {
 			if w.native != nil {
 				w.native.StartDrag()

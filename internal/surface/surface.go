@@ -4,6 +4,8 @@
 package surface
 
 import (
+	"image"
+
 	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/transfer"
@@ -29,6 +31,9 @@ type Conn struct {
 	// registry. local never leaves the process.
 	StartDataDrag  func(transfer.Data, any, transfer.DragOptions, float64, float64) error
 	CancelDataDrag func()
+	// SetDataDragPreview changes the preview of the drag StartDataDrag
+	// started, while it lasts (hot: the point under the pointer).
+	SetDataDragPreview func(image.Image, image.Point)
 	// IsDark reports the system's dark appearance, and Preferences the
 	// settings of the desktop that controls follow, which ThemeChanged
 	// tells changes of as well.

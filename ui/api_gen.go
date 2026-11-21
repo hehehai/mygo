@@ -332,6 +332,17 @@ func (_handle *Context) CloseToast(id string) {
 	_ctx.CloseToast(id)
 }
 
+// DataDrag reports the native drag over the window, wherever it is (over
+// an element that takes it or not), false when none is: a view follows a
+// drag of its own across regions, as a sidebar it comes over.
+func (_handle *Context) DataDrag() (DataDragInfo, bool) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return *new(DataDragInfo), false
+	}
+	return _ctx.DataDrag()
+}
+
 // Direction returns the direction of the elements built now: that of the
 // element they go in. Widgets of an app's own read it to draw what points
 // along the line, as an arrow forward:
@@ -579,6 +590,20 @@ func (_handle *Context) SafeArea() (float32, float32, float32, float32) {
 		return 0, 0, 0, 0
 	}
 	return _ctx.SafeArea()
+}
+
+// ScaleDataDrag shows the preview of the native drag an element of this
+// window started (DragData) at scale of its size, 1 its own, keeping the
+// point pressed under the pointer: a drag made small over a list it
+// drops into. It does nothing without such a drag or a preview, and on
+// platforms that cannot change a drag's preview (all but macOS); scale
+// is kept between 0.05 and 1.
+func (_handle *Context) ScaleDataDrag(scale float32) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.ScaleDataDrag(scale)
 }
 
 // SetMenuPresentation sets how the window shows its popup menus: those of
@@ -1745,7 +1770,9 @@ func Local[T any](e Element, key any, init func() T) *T {
 // Right opens a submenu and Left closes it, the other way round right to
 // left (Direction); Enter and Space choose an item, Escape closes the
 // submenu on top, and Tab and a press outside the menu close it. The
-// pointer highlights the item it moves onto, opening its submenu.
+// pointer highlights the item it moves onto, opening its submenu, but for
+// those it crosses heading for a submenu that shows, which stays open
+// until the pointer rests on one of them (menuAimGrace).
 // Assistive technology sees a menu button, expanded while its menu shows,
 // and a menu of items, check box items and radio items. PopoverMenuButton
 // draws its menu with these parts, in the theme's look.
@@ -5052,6 +5079,34 @@ func (_handle Element) DrawOver(fn func(p *Painter, r Rect)) Element {
 	return wrapElement(_node.DrawOver(fn))
 }
 
+// DropEffect tells what a native drag of this process's value over e
+// (Drop, DragOver: a value DragData's source also drags) would do there,
+// which the platform shows with the pointer (copy: a plus badge; move: the
+// plain arrow) and tells the drag's source as it is let go: effect is
+// given the value and the drag's offer (its operations, and the one the
+// keys held suggest — Option a copy) as the drag moves, on the main
+// thread. Without it the effect is a copy, or what the keys ask for. An
+// effect the source does not offer (DragOptions.Local) falls back to a
+// copy. None: e does not take that value, as Drop's type did not match —
+// the drag goes on to its DropData and the elements around it.
+//
+//	ui.Drop[*Items](folder)
+//	folder.DropEffect(func(v any, o transfer.Offer) transfer.Operation {
+//		if o.Suggested == transfer.Copy {
+//			return transfer.Copy // Option: added
+//		}
+//		return transfer.Move
+//	})
+func (_handle Element) DropEffect(effect func(value any, offer transfer.Offer) transfer.Operation) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.DropEffect(effect))
+}
+
 // DroppedFiles returns the paths of the files dropped on the element since
 // the last frame, nil when none, and makes the element take files dragged
 // over it.
@@ -5063,6 +5118,18 @@ func (_handle Element) DroppedFiles() []string {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.DroppedFiles()
+}
+
+// DroppedFilesAt is DroppedFiles with where they were dropped, in the
+// element's box: a timeline places a file at the time under the drop.
+func (_handle Element) DroppedFilesAt() ([]string, float32, float32) {
+	_node := _handle.node()
+	if _node == nil {
+		return nil, 0, 0
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.DroppedFilesAt()
 }
 
 // Effect draws the element, with its children, through fx, an effect of
@@ -5169,6 +5236,19 @@ func (_handle Element) Expanded(open bool) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Expanded(open))
+}
+
+// FileDragAt is FileDragOver with where the files are, in the element's
+// box, for showing where they would go (a frame follows each move over
+// the element that takes them).
+func (_handle Element) FileDragAt() (float32, float32, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return 0, 0, false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.FileDragAt()
 }
 
 // FileDragOver reports whether files dragged from another app are over

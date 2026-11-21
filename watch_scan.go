@@ -118,6 +118,36 @@ func newFileWatchScan(w *FileWatcher) *fileWatchScan {
 	}
 }
 
+// reopen opens the watched directory again for a look, when the watch
+// does not hold it (fileWatchHoldsRoot), and checks it is still the one
+// watched; release closes it after the look.
+func (s *fileWatchScan) reopen() error {
+	if s.root != nil {
+		return nil
+	}
+	root, err := fileWatchOpenRoot(s.dir)
+	if err != nil {
+		return err
+	}
+	info, err := root.Stat(".")
+	if err == nil && !os.SameFile(StatIdentity(info), s.identity) {
+		err = &os.PathError{Op: "watch", Path: s.dir, Err: errWatchRootChanged}
+	}
+	if err != nil {
+		root.Close()
+		return err
+	}
+	s.root = root
+	return nil
+}
+
+func (s *fileWatchScan) release() {
+	if !fileWatchHoldsRoot && s.root != nil {
+		s.root.Close()
+		s.root = nil
+	}
+}
+
 func (s *fileWatchScan) close() {
 	if s.root != nil {
 		s.root.Close()
@@ -127,6 +157,7 @@ func (s *fileWatchScan) close() {
 // start enrolls the root and, below it, what the watch covers. The events
 // it returns are for entries that changed while it looked at them.
 func (s *fileWatchScan) start() ([]FileEvent, error) {
+	defer s.release()
 	info, err := os.Lstat(s.w.root)
 	if err != nil {
 		return nil, err
@@ -400,6 +431,10 @@ func (s *fileWatchScan) update() ([]FileEvent, error) {
 	if info = StatIdentity(info); !info.IsDir() || !os.SameFile(info, s.identity) {
 		return nil, &os.PathError{Op: "watch", Path: s.dir, Err: errWatchRootChanged}
 	}
+	if err := s.reopen(); err != nil {
+		return nil, err
+	}
+	defer s.release()
 	if err = s.watchParent(); err != nil {
 		return nil, err
 	}

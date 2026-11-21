@@ -49,7 +49,10 @@ func registerDataDragClasses() {
 	classDef("MyGoDragSource", "NSObject", []string{"NSDraggingSource"}, []objc.MethodDef{
 		method("draggingSession:sourceOperationMaskForDraggingContext:", func(self id, _ objc.SEL, session id, context int) uint {
 			if src := macDragSources[self]; src != nil {
-				return macOperations(src.r.Operations)
+				// NSDraggingContextWithinApplication (1): this process's
+				// windows; outside (0), Finder and other apps never get
+				// more than Operations.
+				return macOperations(src.r.OperationsFor(context == 1))
 			}
 			return 0
 		}),
@@ -102,6 +105,8 @@ func macType(f transfer.Format) string {
 		return utPNG
 	case transfer.FileList:
 		return "public.file-url"
+	case transfer.PromisedFiles:
+		return macPromiseType
 	case transfer.URIList:
 		// public.url carries one URL. Keep the full URI-list bytes in a
 		// separate type and offer public.url as an interoperable fallback.
@@ -164,6 +169,12 @@ func macOperations(o transfer.Operation) uint {
 	}
 	return n
 }
+
+// goOperations reads an AppKit operation mask. A generic operation alone
+// leaves the effect to the destination, which takes it as a copy: Finder
+// offers only that for files dragged with Command held (selected with
+// ⌘-click and dragged before the key is let go), and a destination
+// answers it for its usual effect.
 func goOperations(n uint) transfer.Operation {
 	var o transfer.Operation
 	if n&1 != 0 {
@@ -172,7 +183,23 @@ func goOperations(n uint) transfer.Operation {
 	if n&16 != 0 {
 		o |= transfer.Move
 	}
+	if o == transfer.None && n&nsDragOperationGeneric != 0 {
+		o = transfer.Copy
+	}
 	return o
+}
+
+const nsDragOperationGeneric = 4
+
+// destinationOperation is the operation a destination answers a source
+// offering mask: the generic one when the source offers that and not
+// the effect chosen.
+func destinationOperation(op transfer.Operation, mask uint) uint {
+	n := macOperations(op)
+	if n != 0 && n&mask == 0 && mask&nsDragOperationGeneric != 0 {
+		return nsDragOperationGeneric
+	}
+	return n
 }
 
 func (s *surface) SetDropFormats(formats []transfer.Format) {
@@ -182,6 +209,9 @@ func (s *surface) SetDropFormats(formats []transfer.Format) {
 	}
 	if slices.Contains(formats, transfer.URIList) {
 		types = append(types, nsString("public.url"))
+	}
+	if slices.Contains(formats, transfer.PromisedFiles) {
+		types = append(types, promiseTypeIDs()...)
 	}
 	send(s.view, "registerForDraggedTypes:", uintptr(nsArray(types...)))
 }
@@ -197,13 +227,7 @@ func (s *surface) StartDataDrag(r platform.DragRequest) {
 		img := send(class("NSImage"), "imageNamed:", uintptr(nsString("NSMultipleDocuments")))
 		width, height := r.Width, r.Height
 		if len(r.Preview) > 0 {
-			pix := bytes.Clone(r.Preview)
-			for i := 0; i < len(pix); i += 4 {
-				pix[i], pix[i+2] = pix[i+2], pix[i]
-			}
-			var b bytes.Buffer
-			png.Encode(&b, &image.RGBA{Pix: pix, Stride: 4 * width, Rect: image.Rect(0, 0, width, height)})
-			img = autorelease(send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(b.Bytes()))))
+			img = dragNSImage(r.Preview, width, height)
 		} else {
 			width, height = 32, 32
 		}
@@ -228,6 +252,47 @@ func (s *surface) StartDataDrag(r platform.DragRequest) {
 		}
 		send(src.session, "setAnimatesToStartingPositionsOnCancelOrFail:", 1)
 	})
+}
+
+// SetDataDragPreview shows preview for every item of the drag the surface
+// started, (hotX, hotY) of it under the pointer, the items stacked a
+// little apart as StartDataDrag laid them (platform.DragPreviewSurface).
+func (s *surface) SetDataDragPreview(preview []byte, width, height, hotX, hotY int) {
+	src := s.dataDrag
+	if src == nil || src.session == 0 || len(preview) < 4*width*height || width <= 0 || height <= 0 {
+		return
+	}
+	withPool(func() {
+		img := dragNSImage(preview, width, height)
+		// The session's frames in screen coordinates (no view): y goes up,
+		// the image's top hotY above the pointer.
+		at := msgPoint(src.session, sel("draggingLocation"))
+		step := 3
+		if width < 96 && height < 96 {
+			step = 2
+		}
+		classes := nsArray(class("NSPasteboardItem"))
+		block := newBlock(func(_ objc.Block, item id, n int, stop uintptr) {
+			off := float64(min(n, 4) * step)
+			frame := NSRect{Origin: NSPoint{at.X - float64(hotX) + off, at.Y + float64(hotY) - float64(height) - off}, Size: NSSize{float64(width), float64(height)}}
+			msgDraggingFrame(item, sel("setDraggingFrame:contents:"), frame, img)
+		})
+		send(src.session, "enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:",
+			0, 0, uintptr(classes), uintptr(send(class("NSDictionary"), "dictionary")), uintptr(block))
+		block.Release()
+	})
+}
+
+// dragNSImage is an NSImage of a preview (premultiplied BGRA, a pixel a
+// point).
+func dragNSImage(preview []byte, width, height int) id {
+	pix := bytes.Clone(preview[:4*width*height])
+	for i := 0; i < len(pix); i += 4 {
+		pix[i], pix[i+2] = pix[i+2], pix[i]
+	}
+	var b bytes.Buffer
+	png.Encode(&b, &image.RGBA{Pix: pix, Stride: 4 * width, Rect: image.Rect(0, 0, width, height)})
+	return autorelease(send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(b.Bytes()))))
 }
 
 func (src *macDataSource) pasteboardItems() []id {
@@ -294,9 +359,15 @@ func (s *surface) nativeDataEvent(info id, kind platform.SurfaceEventKind) bool 
 	d := &platform.DataDragEvent{Offer: transfer.Offer{Operations: goOperations(uint(send(info, "draggingSourceOperationMask")))}}
 	d.Session = goString(send(pb, "stringForType:", uintptr(nsString(macType(platform.DragSessionFormat)))))
 	items := arrayItems(send(pb, "pasteboardItems"))
+	promises := false
 	for _, item := range items {
 		for _, t := range arrayItems(send(item, "types")) {
-			f := macFormat(goString(t))
+			name := goString(t)
+			if isPromiseType(name) && !promises {
+				promises = true
+				d.Offer.Formats = append(d.Offer.Formats, transfer.PromisedFiles)
+			}
+			f := macFormat(name)
 			if f == platform.DragSessionFormat {
 				continue
 			}
@@ -354,6 +425,11 @@ func (s *surface) nativeDataEvent(info id, kind platform.SurfaceEventKind) bool 
 			dataItems = append(dataItems, transfer.NewItem(reps...))
 		}
 	}
+	if promises && slices.Contains(d.Formats, transfer.PromisedFiles) {
+		if token := receivePromises(pb); token != "" {
+			dataItems = append(dataItems, promiseItem(token))
+		}
+	}
 	d.Data = transfer.New(dataItems...)
 	return s.send(platform.SurfaceEvent{Kind: platform.DataDrop, X: x, Y: y, Drag: d})
 }
@@ -362,5 +438,5 @@ func (s *surface) nativeDataOperation(info id) uint {
 	if !s.nativeDataEvent(info, platform.DataDragOver) {
 		return 0
 	}
-	return macOperations(s.dragOperation)
+	return destinationOperation(s.dragOperation, uint(send(info, "draggingSourceOperationMask")))
 }

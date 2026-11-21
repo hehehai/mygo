@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"image"
+
+	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/internal/scene"
 	"github.com/egoist/mygo/transfer"
 )
@@ -32,6 +35,11 @@ type valueDrag struct {
 	ghost    *node
 	canceled bool
 	native   bool
+	// preview is a native drag's preview as it started, hot its point
+	// under the pointer; scale what ScaleDataDrag shows of it (0: 1).
+	preview image.Image
+	hot     image.Point
+	scale   float32
 	// count is how many things the value stands for, as rows dragged
 	// (countedDrag), for the badge beside the pointer.
 	count int
@@ -127,6 +135,42 @@ func coreDragOver[T any](e *node) (T, bool) {
 	return v, ok
 }
 
+// DropEffect tells what a native drag of this process's value over e
+// (Drop, DragOver: a value DragData's source also drags) would do there,
+// which the platform shows with the pointer (copy: a plus badge; move: the
+// plain arrow) and tells the drag's source as it is let go: effect is
+// given the value and the drag's offer (its operations, and the one the
+// keys held suggest — Option a copy) as the drag moves, on the main
+// thread. Without it the effect is a copy, or what the keys ask for. An
+// effect the source does not offer (DragOptions.Local) falls back to a
+// copy. None: e does not take that value, as Drop's type did not match —
+// the drag goes on to its DropData and the elements around it.
+//
+//	ui.Drop[*Items](folder)
+//	folder.DropEffect(func(v any, o transfer.Offer) transfer.Operation {
+//		if o.Suggested == transfer.Copy {
+//			return transfer.Copy // Option: added
+//		}
+//		return transfer.Move
+//	})
+func (e *node) DropEffect(effect func(value any, offer transfer.Offer) transfer.Operation) *node {
+	e.st.dropEffect = effect
+	return e
+}
+
+// localEffect is the effect s answers a native drag of this process's
+// value over it (DropEffect), false when it does not take it.
+func (s *state) localEffect(d *platform.DataDragEvent) (transfer.Operation, bool) {
+	if s.dropEffect == nil {
+		return transfer.Negotiate(d.Offer.Operations, transfer.Copy, d.Offer.Suggested), true
+	}
+	op := s.dropEffect(d.Local, d.Offer) & (transfer.Copy | transfer.Move)
+	if op == transfer.None {
+		return transfer.None, false
+	}
+	return transfer.Negotiate(d.Offer.Operations, op|transfer.Copy, op), true
+}
+
 // valueTarget returns the innermost element at (x, y) taking value.
 func (rt *engine) valueTarget(x, y float32, value any) uint64 {
 	for _, id := range rt.hitChain(x, y) {
@@ -189,6 +233,7 @@ func (rt *engine) dragMove(x, y float32) {
 					done(result)
 				}
 			}
+			d.preview, d.hot = options.Preview, options.Hotspot
 			if err := rt.host.startDataDrag(src.data(), value, options, x*rt.zoomFactor(), y*rt.zoomFactor()); err != nil {
 				options.Done(transfer.Result{Err: err})
 			}
