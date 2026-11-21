@@ -209,6 +209,7 @@ var elementChains = map[string]bool{
 	"Draw":                 true,
 	"DrawObjects":          true,
 	"DrawOver":             true,
+	"DropEffect":           true,
 	"Effect":               true,
 	"Ellipsis":             true,
 	"End":                  true,
