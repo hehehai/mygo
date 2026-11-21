@@ -129,12 +129,12 @@ func TestPublishS3(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []object{
-		{"/downloads/app/app-1.2.0.dmg", "application/x-apple-diskimage", ""},
-		{"/downloads/app/app-1.2.0-darwin-arm64.tar.gz", "application/gzip", ""},
-		{"/downloads/app/app-1.1.0-to-1.2.0-darwin-arm64.delta", "application/octet-stream", ""},
-		{"/downloads/app/app-setup-1.2.0.exe", "application/vnd.microsoft.portable-executable", ""},
-		{"/downloads/app/empty.deb", "application/vnd.debian.binary-package", ""},
-		{"/downloads/app/app-1.2.0-1.x86_64.rpm", "application/x-rpm", ""},
+		{"/downloads/app/app-1.2.0.dmg", "application/x-apple-diskimage", immutable},
+		{"/downloads/app/app-1.2.0-darwin-arm64.tar.gz", "application/gzip", immutable},
+		{"/downloads/app/app-1.1.0-to-1.2.0-darwin-arm64.delta", "application/octet-stream", immutable},
+		{"/downloads/app/app-setup-1.2.0.exe", "application/vnd.microsoft.portable-executable", immutable},
+		{"/downloads/app/empty.deb", "application/vnd.debian.binary-package", immutable},
+		{"/downloads/app/app-1.2.0-1.x86_64.rpm", "application/x-rpm", immutable},
 		{"/downloads/app/install.sh", "text/plain; charset=utf-8", "no-cache"},
 		{"/downloads/app/update-darwin-arm64.json", "application/json", "no-cache"},
 	}
