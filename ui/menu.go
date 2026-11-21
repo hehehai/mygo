@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/egoist/mygo/internal/l10n"
 	"github.com/egoist/mygo/internal/platform"
@@ -218,7 +219,30 @@ type MenuItem struct {
 	drawn, hi bool
 }
 
+// menuLabels is the function SetMenuLabels set, nil for none.
+var menuLabels atomic.Pointer[func(string) string]
+
+// SetMenuLabels makes every label of a view's menus — ContextMenu's,
+// Element.Menu's, PopoverMenu's, their submenus' and EditItems' — pass
+// through f before it shows, for an app whose menus drop what its buttons
+// say, as a trailing "…": the menu shows f(label), assistive technology
+// reads it, and Tester.Menu, MenuTree and ChooseMenuItem see it; Chosen
+// works as before. Separators, and the labels of the app's menu bar and a
+// tray's menu, built of mygo.MenuItem, are left alone. nil, the default,
+// shows labels as given. Set it before menus open; it holds for every
+// window.
+func SetMenuLabels(f func(string) string) {
+	if f == nil {
+		menuLabels.Store(nil)
+		return
+	}
+	menuLabels.Store(&f)
+}
+
 func (m *Menu) add(label string, typ platform.MenuItemType) *MenuItem {
+	if f := menuLabels.Load(); f != nil && typ != platform.MenuItemSeparator {
+		label = (*f)(label)
+	}
 	r := m.run
 	r.seq++
 	it := &MenuItem{run: r, seq: r.seq, label: label}

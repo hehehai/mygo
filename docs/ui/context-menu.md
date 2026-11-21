@@ -76,6 +76,12 @@ notes it, for the change once the loop is done (see
   another, and the submenus left empty, so a menu built of groups that
   may each be empty shows no stray lines.
 
+`ui.SetMenuLabels(f)` passes every label of a view's menus through `f`,
+for an app whose menus drop what its buttons say (a trailing "…"): the
+menu, assistive technology and the Tester see `f(label)`, and `Chosen`
+works as before. The menu bar and tray menus (`mygo.MenuItem`) keep
+their labels.
+
 ## Which element
 
 The innermost element with a menu gets the click, as a row's button with a
