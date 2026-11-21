@@ -1540,6 +1540,9 @@ type Notification struct {
 	Subtitle string
 	Body     string
 	Silent   bool
+	// Passive goes into Notification Center without a banner or a sound
+	// (UNNotificationInterruptionLevelPassive on macOS 12 and later).
+	Passive bool
 	// Group gathers the notifications that share it (threadIdentifier on
 	// macOS).
 	Group string
@@ -1553,6 +1556,25 @@ type Notification struct {
 	// both).
 	Category string
 	Actions  []NotificationAction
+}
+
+// NotificationStatus is whether the user allows an app's notifications
+// (System Settings › Notifications) and how they show.
+type NotificationStatus struct {
+	// Known: the backend could tell (false: it cannot, the rest is zero).
+	Known bool
+	// Asked: the user has answered; Allowed: they may show (also when
+	// only quietly, provisionally); Denied: they may not.
+	Asked, Allowed, Denied bool
+	// Style is how they show: 0 none (in Notification Center only), 1 a
+	// banner that goes away, 2 an alert that stays.
+	Style int
+}
+
+// NotificationStatusReader is a backend that can read NotificationStatus;
+// done runs on the main thread.
+type NotificationStatusReader interface {
+	NotificationStatus(done func(NotificationStatus))
 }
 
 // NotificationAction is a button of a kind of notification.

@@ -68,7 +68,13 @@ func registerNotificationDelegate() {
 	}
 	classDef("MyGoNotificationDelegate", "NSObject", []string{"UNUserNotificationCenterDelegate"}, []objc.MethodDef{
 		method("userNotificationCenter:willPresentNotification:withCompletionHandler:", func(self id, _ objc.SEL, center, n id, handler uintptr) {
-			// Show banners even while the app is in the foreground.
+			// Show banners even while the app is in the foreground; a
+			// passive one only into the list, as in the background.
+			content := send(send(n, "request"), "content")
+			if respondsTo(content, "interruptionLevel") && uintptr(send(content, "interruptionLevel")) == unPassive {
+				callBlock(handler, 1<<3) // list
+				return
+			}
 			callBlock(handler, 1<<1|1<<3|1<<4) // sound | list | banner
 		}),
 		method("userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:", func(self id, _ objc.SEL, center, resp id, handler uintptr) {
@@ -121,6 +127,32 @@ func (b *Backend) attachNotificationDelegate() {
 type waitingNotification struct {
 	n    *platform.Notification
 	done func(error)
+}
+
+// unPassive is UNNotificationInterruptionLevelPassive: into Notification
+// Center, no banner, no sound.
+const unPassive = 0
+
+// NotificationStatus reads the app's notification settings
+// (getNotificationSettingsWithCompletionHandler:); done runs on the main
+// thread.
+func (b *Backend) NotificationStatus(done func(platform.NotificationStatus)) {
+	if !b.NotificationsSupported() {
+		done(platform.NotificationStatus{})
+		return
+	}
+	withPool(func() {
+		blk := newBlock(func(_ objc.Block, s id) {
+			// UNAuthorizationStatus: 0 not determined, 1 denied, 2 authorized,
+			// 3 provisional, 4 ephemeral; UNAlertStyle: 0 none, 1 banner, 2 alert.
+			auth := int(uintptr(send(s, "authorizationStatus")))
+			st := platform.NotificationStatus{Known: true, Asked: auth != 0, Allowed: auth >= 2, Denied: auth == 1,
+				Style: int(uintptr(send(s, "alertStyle")))}
+			b.runOnMain(func() { done(st) })
+		})
+		send(notificationCenter(), "getNotificationSettingsWithCompletionHandler:", uintptr(blk))
+		blk.Release()
+	})
 }
 
 // notifyOptions are the permissions asked for: badge, sound and alert.
@@ -244,6 +276,9 @@ func (b *Backend) addNotification(n *platform.Notification, done func(error)) {
 		}
 		if n.Group != "" {
 			send(content, "setThreadIdentifier:", uintptr(nsString(n.Group)))
+		}
+		if n.Passive && respondsTo(content, "setInterruptionLevel:") {
+			send(content, "setInterruptionLevel:", unPassive)
 		}
 		if n.Category != "" {
 			send(content, "setCategoryIdentifier:", uintptr(nsString(n.Category)))

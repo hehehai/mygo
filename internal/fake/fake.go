@@ -155,6 +155,8 @@ type Backend struct {
 	// NotificationError, when set, is what showing a notification fails
 	// with.
 	NotificationError error
+	// Status is what NotificationStatus reports (Known false: unset).
+	Status platform.NotificationStatus
 	// OnNotification, when set, handles delivery on the main thread, allowing
 	// tests to model an authorization answer that arrives asynchronously.
 	OnNotification func(*platform.Notification, func(error))
@@ -1837,4 +1839,12 @@ func (b *Backend) SetSecretError(err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.secretError = err
+}
+
+// NotificationStatus reports Status.
+func (b *Backend) NotificationStatus(done func(platform.NotificationStatus)) {
+	b.mu.Lock()
+	st := b.Status
+	b.mu.Unlock()
+	done(st)
 }

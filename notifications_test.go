@@ -296,3 +296,25 @@ func TestNotificationActions(t *testing.T) {
 		t.Errorf("plain %+v", p)
 	}
 }
+
+// TestNotificationPassiveAndStatus: Passive reaches the platform; the
+// status is the backend's, not Known where it cannot tell.
+func TestNotificationPassiveAndStatus(t *testing.T) {
+	showNotification(t, NotificationOptions{ID: "quiet-1", Title: "Inboxly", Body: "Sent", Passive: true, Silent: true})
+	if got := fb.Notification("quiet-1"); got == nil || !got.Passive || !got.Silent {
+		t.Fatalf("platform notification %+v", got)
+	}
+	status := func() NotificationStatus {
+		ch := make(chan NotificationStatus, 1)
+		App.NotificationStatus(func(s NotificationStatus) { ch <- s })
+		return <-ch
+	}
+	if s := status(); s.Known {
+		t.Errorf("unset: %+v", s)
+	}
+	fb.Status = NotificationStatus{Known: true, Asked: true, Denied: true}
+	defer func() { fb.Status = NotificationStatus{} }()
+	if s := status(); !s.Known || !s.Denied || s.Allowed {
+		t.Errorf("denied: %+v", s)
+	}
+}

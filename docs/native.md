@@ -154,6 +154,14 @@ mygo.NewNotification(mygo.NotificationOptions{
 }).Show()
 ```
 
+`Passive` puts a notification in Notification Center without a banner or
+a sound, also while the app is in front (macOS 12 and later), for what
+the user need not see at once, as a message sent. `App.NotificationStatus`
+tells, without asking the user, whether the app's notifications are
+allowed and how they show (none, banner, alert), so its settings can say
+so and offer System Settings; a platform that cannot tell answers a status
+that is not `Known`.
+
 ### Buttons on macOS
 
 `RegisterNotificationCategory` declares a kind of notification and its

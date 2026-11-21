@@ -1148,6 +1148,10 @@ type NotificationOptions struct {
 	Body     string
 	// Silent suppresses the notification sound.
 	Silent bool
+	// Passive puts it in Notification Center without a banner or a sound,
+	// even while the app is in front (macOS 12 and later; elsewhere it
+	// shows as usual).
+	Passive bool
 	// Group gathers the notifications that share it in one stack of
 	// Notification Center (macOS), such as the messages of a conversation.
 	// Empty leaves them in the app's.
@@ -1361,6 +1365,7 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 			Subtitle: n.opts.Subtitle,
 			Body:     n.opts.Body,
 			Silent:   n.opts.Silent,
+			Passive:  n.opts.Passive,
 			Group:    n.opts.Group,
 			Image:    n.opts.Image,
 			Category: n.opts.Category,
@@ -1445,6 +1450,26 @@ func notificationAction(id, action, text string) {
 		fire2(&n.onAction, action, text)
 	}
 	fire3(&App.onNotificationAction, id, action, text)
+}
+
+// NotificationStatus is whether the user allows the app's notifications
+// and how they show (System Settings › Notifications).
+type NotificationStatus = platform.NotificationStatus
+
+// NotificationStatus asks the system whether the app's notifications are
+// allowed and how they show, for an app to say so in its settings and
+// offer System Settings; fn runs on the main thread. It does not ask the
+// user. A platform that cannot tell answers a status that is not Known.
+func (a *Application) NotificationStatus(fn func(NotificationStatus)) {
+	needsApp("App.NotificationStatus")
+	onMain(func() {
+		r, ok := backend().(platform.NotificationStatusReader)
+		if !ok {
+			fn(NotificationStatus{})
+			return
+		}
+		r.NotificationStatus(fn)
+	})
 }
 
 func notificationClicked(id string) {
