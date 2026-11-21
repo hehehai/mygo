@@ -304,3 +304,57 @@ func TestNativeDestinationRejectsMismatchDisabledAndFailedData(t *testing.T) {
 		t.Fatal("failed provider acknowledged a drop")
 	}
 }
+
+// TestTesterDataDrags: a test drags another app's data over and drops it
+// (DragDataOver, DropDataAt), and ends a drag an element started
+// (DraggedData, FinishDataDrag).
+func TestTesterDataDrags(t *testing.T) {
+	var got []transfer.Drop
+	var results []transfer.Result
+	over := false
+	tt := coreNewTester(func(c *context) {
+		coreBox(c).Size(80, 40).DragData(transfer.TextData("out"), transfer.DragOptions{Done: func(r transfer.Result) { results = append(results, r) }})
+		zone := coreBox(c).Size(100, 100)
+		opts := transfer.DropOptions{Formats: []transfer.Format{transfer.Text}, Operations: transfer.Copy}
+		_, over = coreDataDragOver(zone, opts)
+		if d, ok := coreDropData(zone, opts); ok {
+			got = append(got, d)
+		}
+	}, 200, 200)
+	if !tt.DragDataOver(20, 60, transfer.Offer{Formats: []transfer.Format{transfer.Text}}) || !over {
+		t.Fatal("not over the zone")
+	}
+	if tt.DragDataOver(20, 60, transfer.Offer{Formats: []transfer.Format{transfer.PNG}}) || over {
+		t.Fatal("a format it does not take is over it")
+	}
+	tt.DragDataLeave()
+	if over {
+		t.Fatal("still over after leaving")
+	}
+	if tt.DropDataAt(20, 60, transfer.TextData("x"), transfer.Move) {
+		t.Fatal("a move-only drop taken by a copy target")
+	}
+	if !tt.DropDataAt(20, 60, transfer.TextData("in"), transfer.None) {
+		t.Fatal("drop refused")
+	}
+	tt.Frame()
+	if len(got) != 1 || got[0].Operation != transfer.Copy {
+		t.Fatalf("drops %v", got)
+	}
+	if b, _ := got[0].Data.Read(transfer.Text); string(b) != "in" {
+		t.Fatalf("dropped %q", b)
+	}
+	if _, ok := tt.DraggedData(); ok {
+		t.Fatal("a drag before any started")
+	}
+	tt.Press(10, 10)
+	tt.Move(20, 20)
+	d, ok := tt.DraggedData()
+	if b, _ := d.Read(transfer.Text); !ok || string(b) != "out" {
+		t.Fatalf("dragged %q %v", b, ok)
+	}
+	tt.FinishDataDrag(transfer.Result{Canceled: true})
+	if _, ok := tt.DraggedData(); ok || len(results) != 1 || !results[0].Canceled {
+		t.Fatalf("results %v", results)
+	}
+}

@@ -47,3 +47,25 @@ func TestDataDragFormatMappings(t *testing.T) {
 		}
 	})
 }
+
+// Finder offers only the generic operation for files dragged with Command
+// held: a destination takes them as a copy and answers generic.
+func TestDataDragGenericOperation(t *testing.T) {
+	for _, c := range []struct {
+		mask uint
+		want transfer.Operation
+	}{{1 | 16, transfer.Copy | transfer.Move}, {4, transfer.Copy}, {1 | 4, transfer.Copy}, {2, transfer.None}, {0, transfer.None}, {^uint(0), transfer.Copy | transfer.Move}} {
+		if got := goOperations(c.mask); got != c.want {
+			t.Errorf("mask %d: %v, want %v", c.mask, got, c.want)
+		}
+	}
+	if got := destinationOperation(transfer.Copy, 4); got != 4 {
+		t.Errorf("a copy for a generic source: %d, want 4", got)
+	}
+	if got := destinationOperation(transfer.Copy, 1|16); got != 1 {
+		t.Errorf("a copy for a copy source: %d, want 1", got)
+	}
+	if got := destinationOperation(transfer.None, 4); got != 0 {
+		t.Errorf("nothing taken: %d, want 0", got)
+	}
+}

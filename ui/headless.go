@@ -430,6 +430,14 @@ func (t *Tester) timerDue(at, armed time.Time) (time.Time, bool) {
 	return at, true
 }
 
+// sendTaken sends ev, settles the frames, and reports whether the content
+// took it.
+func (t *Tester) sendTaken(ev platform.SurfaceEvent) bool {
+	taken := t.rt.event(ev)
+	t.settle()
+	return taken
+}
+
 func (t *Tester) send(ev platform.SurfaceEvent) {
 	switch ev.Kind {
 	case platform.PointerMove, platform.PointerDown, platform.PointerUp:
@@ -1055,6 +1063,50 @@ func (t *Tester) TouchUp(id uint64, x, y float32) {
 // own at the screen's edge (TouchCanceled).
 func (t *Tester) TouchCancel(id uint64) {
 	t.send(platform.SurfaceEvent{Kind: platform.TouchCancel, ID: id})
+}
+
+// DragDataOver drags another app's data over (x, y), as a native drag
+// session does before a drop: offer's formats (hover reads no data) and
+// operations (none: copy). It reports whether an element takes it there
+// (DataDragOver, DropData), as the platform answers the drag's source.
+func (t *Tester) DragDataOver(x, y float32, offer transfer.Offer) bool {
+	if offer.Operations == transfer.None {
+		offer.Operations = transfer.Copy
+	}
+	return t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDragOver, X: float64(x), Y: float64(y), Drag: &platform.DataDragEvent{Offer: offer}})
+}
+
+// DragDataLeave takes the drag DragDataOver brought out of the window.
+func (t *Tester) DragDataLeave() {
+	t.send(platform.SurfaceEvent{Kind: platform.DataDragLeave, Drag: &platform.DataDragEvent{}})
+}
+
+// DropDataAt drops another app's data at (x, y) with operations (none:
+// copy), as a native drag session does: over (x, y) once more, then the
+// drop. It reports whether an element took it: false, the platform
+// tells the source it was refused (on macOS the drag slides back).
+func (t *Tester) DropDataAt(x, y float32, data transfer.Data, operations transfer.Operation) bool {
+	offer := transfer.Offer{Formats: data.Formats(), Operations: operations}
+	if !t.DragDataOver(x, y, offer) {
+		return false
+	}
+	if offer.Operations == transfer.None {
+		offer.Operations = transfer.Copy
+	}
+	return t.sendTaken(platform.SurfaceEvent{Kind: platform.DataDrop, X: float64(x), Y: float64(y), Drag: &platform.DataDragEvent{Offer: offer, Data: data}})
+}
+
+// DraggedData is what an element's DragData gave the drag it started
+// (a press moved past the threshold), while the drag lasts.
+func (t *Tester) DraggedData() (transfer.Data, bool) {
+	return t.h.dragData, t.h.dragOptions.Done != nil
+}
+
+// FinishDataDrag ends the drag an element started with r, as the
+// destination's drop (r.Operation) or a cancel does: its Done runs.
+func (t *Tester) FinishDataDrag(r transfer.Result) {
+	t.h.finishDataDrag(r)
+	t.settle()
 }
 
 // HoldModifiers presses or lets go of modifier keys on their own, as holding

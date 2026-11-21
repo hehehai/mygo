@@ -164,6 +164,12 @@ func macOperations(o transfer.Operation) uint {
 	}
 	return n
 }
+
+// goOperations reads an AppKit operation mask. A generic operation alone
+// leaves the effect to the destination, which takes it as a copy: Finder
+// offers only that for files dragged with Command held (selected with
+// ⌘-click and dragged before the key is let go), and a destination
+// answers it for its usual effect.
 func goOperations(n uint) transfer.Operation {
 	var o transfer.Operation
 	if n&1 != 0 {
@@ -172,7 +178,23 @@ func goOperations(n uint) transfer.Operation {
 	if n&16 != 0 {
 		o |= transfer.Move
 	}
+	if o == transfer.None && n&nsDragOperationGeneric != 0 {
+		o = transfer.Copy
+	}
 	return o
+}
+
+const nsDragOperationGeneric = 4
+
+// destinationOperation is the operation a destination answers a source
+// offering mask: the generic one when the source offers that and not
+// the effect chosen.
+func destinationOperation(op transfer.Operation, mask uint) uint {
+	n := macOperations(op)
+	if n != 0 && n&mask == 0 && mask&nsDragOperationGeneric != 0 {
+		return nsDragOperationGeneric
+	}
+	return n
 }
 
 func (s *surface) SetDropFormats(formats []transfer.Format) {
@@ -362,5 +384,5 @@ func (s *surface) nativeDataOperation(info id) uint {
 	if !s.nativeDataEvent(info, platform.DataDragOver) {
 		return 0
 	}
-	return macOperations(s.dragOperation)
+	return destinationOperation(s.dragOperation, uint(send(info, "draggingSourceOperationMask")))
 }
