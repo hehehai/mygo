@@ -1140,6 +1140,24 @@ func (w *Window) Focus() { w.do(platform.Window.Focus) }
 // Blur removes focus from the window.
 func (w *Window) Blur() { w.do(platform.Window.Blur) }
 
+// GiveUpKey lets the keyboard go from the window, when it has it, without
+// bringing anything forward: what Blur does not do on macOS, where it
+// sends the window back and leaves it key. It is for a panel
+// (WindowOptions.Panel) that took the keyboard for a while — a text input
+// pressed, a search opened — and gives it back as that closes. While the
+// app is the frontmost one, its frontmost visible window that is not a
+// panel nor a flyout and can take the keyboard becomes the key window (as
+// AppKit picks one when a key window closes); otherwise the window just
+// resigns, the app is not activated. On Linux, Windows and the web it
+// does nothing.
+func (w *Window) GiveUpKey() {
+	w.do(func(n platform.Window) {
+		if k, ok := n.(platform.KeyGiver); ok {
+			k.GiveUpKey()
+		}
+	})
+}
+
 // IsFocused reports whether the window has keyboard focus.
 func (w *Window) IsFocused() bool { return get(w, platform.Window.IsFocused) }
 

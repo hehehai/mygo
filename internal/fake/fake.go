@@ -631,6 +631,10 @@ type Window struct {
 	// InputRegion is what SetInputRegion set last: nil for all of the
 	// window.
 	InputRegion []platform.Rect
+	// GaveUpKey counts the calls of GiveUpKey; KeyHeir, when set, is the
+	// window that takes the keyboard it gives up (the app's frontmost one).
+	GaveUpKey int
+	KeyHeir   *Window
 	// VibrancyStyle is what SetVibrancyStyle set last.
 	VibrancyStyle platform.VibrancyStyle
 	// AsyncFunction answers CallAsyncFunction.
@@ -787,6 +791,29 @@ func (w *Window) Hide()           { w.mu.Lock(); w.visible = false; w.mu.Unlock(
 func (w *Window) IsVisible() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.visible }
 func (w *Window) Focus()          { w.H.Focused() }
 func (w *Window) Blur()           { w.H.Blurred() }
+
+// GiveUpKey, as on macOS (platform.KeyGiver): a window that has the
+// keyboard resigns (OnBlur); KeyHeir, shown, takes it (OnFocus), as AppKit
+// makes the app's frontmost window key. Blur, unlike macOS's, blurs the
+// window still.
+func (w *Window) GiveUpKey() {
+	w.mu.Lock()
+	had := w.focused
+	w.focused = false
+	w.GaveUpKey++
+	heir := w.KeyHeir
+	w.mu.Unlock()
+	if !had {
+		return
+	}
+	w.H.Blurred()
+	if heir != nil && heir != w && heir.IsVisible() && !heir.IsClosed() {
+		heir.mu.Lock()
+		heir.focused = true
+		heir.mu.Unlock()
+		heir.H.Focused()
+	}
+}
 func (w *Window) IsFocused() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.focused }
 
 // CornerRadius is the frameless window's WindowOptions.CornerRadius, as

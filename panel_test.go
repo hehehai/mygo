@@ -2,7 +2,10 @@
 
 package mygo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestPanelOptions gives a panel's backend a window above others, out of
 // the taskbar, that cannot minimize, maximize or go full screen.
@@ -77,5 +80,41 @@ func TestPanelOverMenuBar(t *testing.T) {
 	_, fw = testWindow(t, WindowOptions{OverMenuBar: true})
 	if fw.Opts.OverMenuBar {
 		t.Error("a window that is no panel took OverMenuBar")
+	}
+}
+
+// TestPanelGivesUpKey: a panel that took the keyboard gives it up — it
+// blurs, and the app's window takes it back — where Blur leaves it key
+// on macOS. A window without the keyboard gives nothing up.
+func TestPanelGivesUpKey(t *testing.T) {
+	main, fmain := testWindow(t, WindowOptions{Hidden: true})
+	panel, fpanel := testWindow(t, WindowOptions{Panel: true, Hidden: true})
+	onMain(fmain.ShowInactive)
+	fpanel.KeyHeir = fmain
+	var events []string
+	main.OnFocus(func() { events = append(events, "main focus") })
+	main.OnBlur(func() { events = append(events, "main blur") })
+	panel.OnFocus(func() { events = append(events, "panel focus") })
+	panel.OnBlur(func() { events = append(events, "panel blur") })
+
+	panel.Show()
+	onMain(fpanel.Focus)
+	if !panel.IsFocused() {
+		t.Fatal("the panel shown: not focused")
+	}
+	events = nil
+	panel.GiveUpKey()
+	onMain(func() {})
+	if panel.IsFocused() || !main.IsFocused() || FocusedWindow() != main {
+		t.Errorf("given up: panel focused %v, main %v, FocusedWindow %v", panel.IsFocused(), main.IsFocused(), FocusedWindow())
+	}
+	if got := strings.Join(events, ","); got != "panel blur,main focus" {
+		t.Errorf("events %q", got)
+	}
+	events = nil
+	panel.GiveUpKey() // not key: nothing
+	onMain(func() {})
+	if len(events) != 0 || !main.IsFocused() || fpanel.GaveUpKey != 2 {
+		t.Errorf("given up again: events %q, main focused %v, calls %d", events, main.IsFocused(), fpanel.GaveUpKey)
 	}
 }

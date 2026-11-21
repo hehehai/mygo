@@ -1370,6 +1370,12 @@ type VibrancyStyler interface {
 	SetVibrancyStyle(s VibrancyStyle)
 }
 
+// KeyGiver is a Window that can let the keyboard go without bringing an
+// app or a window forward (mygo.Window.GiveUpKey; macOS).
+type KeyGiver interface {
+	GiveUpKey()
+}
+
 // PointerWatcher is a Screen that tells where the pointer is while it
 // moves in any app (macOS).
 type PointerWatcher interface {

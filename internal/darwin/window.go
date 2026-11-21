@@ -1271,6 +1271,48 @@ func (w *window) Focus() {
 }
 
 func (w *window) Blur() { send(w.win, "orderBack:", 0) }
+
+// GiveUpKey lets the keyboard go from the key window
+// (platform.KeyGiver): orderBack: (Blur) leaves a window key, and a
+// nonactivating panel given the keyboard kept it, so that what was typed
+// went to a window no longer in use. While the app is the frontmost one —
+// NSApp's isActive says so too while one of its nonactivating panels is
+// key, so NSWorkspace is asked — its frontmost window that can take the
+// keyboard becomes key; otherwise the window resigns, leaving the keys to
+// the app in front, which is not changed.
+func (w *window) GiveUpKey() {
+	if w.closed || w.host != nil || !sendBool(w.win, "isKeyWindow") {
+		return
+	}
+	if next := w.keyHeir(); next != nil {
+		send(next.win, "makeKeyWindow")
+		return
+	}
+	send(w.win, "resignKeyWindow")
+}
+
+// keyHeir is the window that takes the keyboard w gives up: the app's
+// frontmost visible window, not minimized, not a panel nor a flyout, that
+// can be key — while the app is the frontmost one; else none.
+func (w *window) keyHeir() *window {
+	var heir *window
+	withPool(func() {
+		front := send(send(class("NSWorkspace"), "sharedWorkspace"), "frontmostApplication")
+		if front == 0 || sendInt(front, "processIdentifier") != os.Getpid() {
+			return
+		}
+		for _, nw := range arrayItems(send(w.b.app, "orderedWindows")) {
+			o := w.b.byNSWindow[nw]
+			if o == nil || o == w || o.closed || o.opts.Panel || o.opts.Flyout != nil || o.popover != 0 ||
+				!sendBool(nw, "isVisible") || sendBool(nw, "isMiniaturized") || !sendBool(nw, "canBecomeKeyWindow") {
+				continue
+			}
+			heir = o
+			return
+		}
+	})
+	return heir
+}
 func (w *window) IsFocused() bool {
 	return sendBool(w.win, "isKeyWindow")
 }

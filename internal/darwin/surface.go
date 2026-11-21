@@ -795,6 +795,24 @@ func noCursor() id {
 	return hiddenCursor
 }
 
+// takeKeyFromPanel makes a window pressed the key window when a panel of
+// the app (WindowOptions.Panel: nonactivating) has the keyboard: AppKit
+// left it with the panel, so that what was typed next went to the
+// panel's text input, not to the window clicked (Refto's notch shelf
+// searching, its main window's search field clicked). A window that is
+// key already, a panel itself, a flyout, one hosted in another, or one
+// that cannot be key is left alone.
+func (w *window) takeKeyFromPanel() {
+	if w == nil || w.closed || w.host != nil || w.opts.Panel || w.opts.Flyout != nil || sendBool(w.win, "isKeyWindow") || !sendBool(w.win, "canBecomeKeyWindow") {
+		return
+	}
+	key := w.b.byNSWindow[send(w.b.app, "keyWindow")]
+	if key == nil || key == w || !key.opts.Panel {
+		return
+	}
+	send(w.win, "makeKeyWindow")
+}
+
 // TakeKeyboard makes a panel that takes the keyboard only for text
 // (platform.WindowOptions.KeyboardOnlyForText) the key window, without
 // activating the app, as one of its text inputs is pressed
@@ -1167,6 +1185,7 @@ func registerSurfaceClass() {
 					// press.
 					s.w.pressedLeft(ev)
 				}
+				s.w.takeKeyFromPanel()
 				send(s.w.win, "makeFirstResponder:", uintptr(self))
 			}
 			s.mouse(kind, ev, btn)
