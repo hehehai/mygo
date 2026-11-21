@@ -14,7 +14,7 @@ import (
 // left alone. SpaceInfo reads it all back.
 func TestRejoinSpaces(t *testing.T) {
 	load()
-	withPool(func() { rejoinSpaces(t) })
+	onMainThread(func() { withPool(func() { rejoinSpaces(t) }) })
 }
 
 func rejoinSpaces(t *testing.T) {

@@ -17,26 +17,28 @@ import (
 // MyGoDragSource). The panels are made, never shown.
 func TestPanelKeyboard(t *testing.T) {
 	load()
-	withPool(func() {
-		if !hasClass("MyGoTestPanel") {
-			classDef("MyGoTestPanel", "NSPanel", nil, []objc.MethodDef{
-				method("canBecomeKeyWindow", panelCanBecomeKey),
-			})
-		}
-		previous := theBackend
-		b := &Backend{byNSWindow: map[id]*window{}}
-		theBackend = b
-		defer func() { theBackend = previous }()
-		for _, focusable := range []bool{true, false} {
-			win := msgInitWindow(send(class("MyGoTestPanel"), "alloc"), sel("initWithContentRect:styleMask:backing:defer:"),
-				NSRect{Size: NSSize{Width: 200, Height: 100}}, styleNonactivatingPanel, nsBackingStoreBuffered, true)
-			send(win, "setReleasedWhenClosed:", 0)
-			b.byNSWindow[win] = &window{b: b, win: win, opts: &platform.WindowOptions{Panel: true, Focusable: focusable}}
-			if got := sendBool(win, "canBecomeKeyWindow"); got != focusable {
-				t.Errorf("a panel Focusable %v: canBecomeKeyWindow %v", focusable, got)
+	onMainThread(func() {
+		withPool(func() {
+			if !hasClass("MyGoTestPanel") {
+				classDef("MyGoTestPanel", "NSPanel", nil, []objc.MethodDef{
+					method("canBecomeKeyWindow", panelCanBecomeKey),
+				})
 			}
-			delete(b.byNSWindow, win)
-			release(win)
-		}
+			previous := theBackend
+			b := &Backend{byNSWindow: map[id]*window{}}
+			theBackend = b
+			defer func() { theBackend = previous }()
+			for _, focusable := range []bool{true, false} {
+				win := msgInitWindow(send(class("MyGoTestPanel"), "alloc"), sel("initWithContentRect:styleMask:backing:defer:"),
+					NSRect{Size: NSSize{Width: 200, Height: 100}}, styleNonactivatingPanel, nsBackingStoreBuffered, true)
+				send(win, "setReleasedWhenClosed:", 0)
+				b.byNSWindow[win] = &window{b: b, win: win, opts: &platform.WindowOptions{Panel: true, Focusable: focusable}}
+				if got := sendBool(win, "canBecomeKeyWindow"); got != focusable {
+					t.Errorf("a panel Focusable %v: canBecomeKeyWindow %v", focusable, got)
+				}
+				delete(b.byNSWindow, win)
+				release(win)
+			}
+		})
 	})
 }
