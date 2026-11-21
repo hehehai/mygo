@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -52,6 +53,9 @@ type UpdateSource interface {
 	// Open returns the file at url, which the manifest names.
 	Open(ctx context.Context, url string) (io.ReadCloser, error)
 }
+
+// SetTransport does nothing: browsers do not update apps.
+func (u *UpdaterModule) SetTransport(rt http.RoundTripper) {}
 
 // SetSource does nothing: browsers do not update apps.
 func (u *UpdaterModule) SetSource(s UpdateSource) {}

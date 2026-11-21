@@ -685,6 +685,128 @@ func TestHTTPGetRetries(t *testing.T) {
 	}
 }
 
+// A download whose connection drops part way goes on with a Range request
+// from where it stopped, through the transport of SetTransport; a server
+// that answers the whole file again, or a file that changed, fails it.
+func TestHTTPGetResumes(t *testing.T) {
+	defer func(d time.Duration) { httpResumeWait = d }(httpResumeWait)
+	httpResumeWait = time.Millisecond
+	data := bytes.Repeat([]byte("0123456789abcdef"), 40_000)
+	var drops, ranges atomic.Int32
+	var ignoreRange atomic.Bool
+	var ifRange atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"v1"`)
+		if rg := r.Header.Get("Range"); rg != "" && !ignoreRange.Load() {
+			ranges.Add(1)
+			ifRange.Store(r.Header.Get("If-Range"))
+			from, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(rg, "bytes="), "-"))
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", from, len(data)-1, len(data)))
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)-from))
+			w.WriteHeader(http.StatusPartialContent)
+			end := len(data)
+			if drops.Add(1) == 2 { // the first resume dies too, after some bytes
+				end = from + 1000
+			}
+			w.Write(data[from:end])
+			if end < len(data) {
+				hijackClose(w)
+			}
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+		if r.Header.Get("Range") == "" && drops.Load() == 0 {
+			drops.Add(1)
+			w.Write(data[:len(data)/3]) // the first connection dies a third of the way
+			hijackClose(w)
+			return
+		}
+		w.Write(data)
+	}))
+	defer srv.Close()
+	var through atomic.Int32
+	Updater.SetTransport(roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		through.Add(1)
+		return http.DefaultTransport.RoundTrip(r)
+	}))
+	defer Updater.SetTransport(nil)
+
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	sum := sha256.Sum256(data)
+	path := filepath.Join(t.TempDir(), "app.tar.gz")
+	var last int64
+	err := download(t.Context(), httpGet, srv.URL+"/app.tar.gz", int64(len(data)), signed{update.SignRelease(priv, "1.2.0", "", sum[:]), "1.2.0", ""}, pub, path, func(n, _ int64) { last = n })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, data) || last != int64(len(data)) {
+		t.Fatalf("got %d bytes (progress %d), want %d", len(got), last, len(data))
+	}
+	if ranges.Load() != 2 || through.Load() != 3 || ifRange.Load() != `"v1"` {
+		t.Errorf("%d Range requests (If-Range %v), %d requests through the transport", ranges.Load(), ifRange.Load(), through.Load())
+	}
+
+	// A server that sends the whole file again is not joined to the part.
+	drops.Store(0)
+	ignoreRange.Store(true)
+	body, err := httpGet(t.Context(), srv.URL+"/app.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadAll(body)
+	body.Close()
+	if err == nil || !strings.Contains(err.Error(), "not the bytes from") {
+		t.Errorf("a server that does not resume: %v", err)
+	}
+}
+
+// hijackClose ends the connection of a response under way.
+func hijackClose(w http.ResponseWriter) {
+	w.(http.Flusher).Flush()
+	if c, _, err := w.(http.Hijacker).Hijack(); err == nil {
+		c.Close()
+	}
+}
+
+// SetTransport: the checks go through the app's transport, redirects
+// still only to HTTPS, and back to the default once it is nil.
+func TestUpdaterSetTransport(t *testing.T) {
+	ctx := context.Background()
+	srv, key, _, _ := updateServer(t, "1.3.0", "v2", "")
+	var through atomic.Int32
+	Updater.SetTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		through.Add(1)
+		return http.DefaultTransport.RoundTrip(req)
+	}))
+	defer Updater.SetTransport(nil)
+	if up, err := checkUpdate(ctx, feedSource(srv.URL+"/update.json"), key, "1.2.0", false); up == nil || err != nil {
+		t.Fatalf("checkUpdate = %+v, %v", up, err)
+	}
+	if through.Load() == 0 {
+		t.Error("the check did not go through the transport set")
+	}
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/update.json", http.StatusFound)
+	}))
+	defer redirect.Close()
+	if _, err := checkUpdate(ctx, feedSource(redirect.URL+"/update.json"), key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Errorf("a redirect to plain HTTP through the transport set: %v", err)
+	}
+	Updater.SetTransport(nil)
+	n := through.Load()
+	if up, err := checkUpdate(ctx, feedSource(srv.URL+"/update.json"), key, "1.2.0", false); up == nil || err != nil {
+		t.Fatalf("checkUpdate after SetTransport(nil) = %+v, %v", up, err)
+	}
+	if through.Load() != n {
+		t.Error("SetTransport(nil) kept the transport")
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
 // A server that accepts the connection and never answers is given up on,
 // rather than holding a check open until the socket times out.
 func TestHTTPGetHeaderTimeout(t *testing.T) {

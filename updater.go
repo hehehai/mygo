@@ -799,6 +799,20 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopback(u.Hostname())) {
 		return nil, fmt.Errorf("refusing to download %s: updates need HTTPS", rawURL)
 	}
+	body, validator, err := httpRequest(ctx, rawURL, 0, "")
+	if err != nil {
+		return nil, err
+	}
+	return &resumingBody{ctx: ctx, url: rawURL, body: body, validator: validator}, nil
+}
+
+// httpRequest asks for rawURL from byte offset on, with a Range request
+// when offset > 0 (If-Range validator, the ETag or Last-Modified of the
+// first response, so that a file that changed is not joined to another),
+// which must be answered with 206 Partial Content from offset. It tries a
+// failure that a moment may mend again (httpRetries), and returns the body
+// and the validator of the response.
+func httpRequest(ctx context.Context, rawURL string, offset int64, validator string) (io.ReadCloser, string, error) {
 	client := httpClient()
 	for try := 0; ; try++ {
 		// Canceled when the body closes, or when nothing arrives: the one
@@ -808,37 +822,139 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			cancel()
-			return nil, err
+			return nil, "", err
 		}
 		// Not the app's name: GitHub's release assets come from a store that
 		// answers 400 to a User-Agent with bytes outside ASCII, as 云音乐, for
 		// every file its CDN has not cached yet.
 		req.Header.Set("User-Agent", "mygo-updater")
+		want := http.StatusOK
+		if offset > 0 {
+			want = http.StatusPartialContent
+			req.Header.Set("Range", "bytes="+strconv.FormatInt(offset, 10)+"-")
+			if validator != "" {
+				req.Header.Set("If-Range", validator)
+			}
+		}
 		resp, err := client.Do(req)
 		var wait time.Duration
 		switch {
 		case err != nil:
 			cancel()
-			if ctx.Err() != nil || try >= len(httpRetries) {
-				return nil, err
+			if ctx.Err() != nil || try >= len(httpRetries) || errors.Is(err, errNeedHTTPS) {
+				return nil, "", err
 			}
-		case resp.StatusCode == http.StatusOK:
-			return newStalledBody(resp.Body, cancel), nil
+		case resp.StatusCode == want && (offset == 0 || contentRangeFrom(resp.Header.Get("Content-Range")) == offset):
+			v := resp.Header.Get("ETag")
+			if v == "" || strings.HasPrefix(v, "W/") {
+				v = resp.Header.Get("Last-Modified")
+			}
+			return newStalledBody(resp.Body, cancel), v, nil
+		case offset > 0 && resp.StatusCode/100 == 2:
+			// The whole file, or another part: the server does not resume
+			// this one, or it changed.
+			resp.Body.Close()
+			cancel()
+			return nil, "", fmt.Errorf("GET %s: %s, not the bytes from %d", rawURL, resp.Status, offset)
 		default:
 			resp.Body.Close()
 			cancel()
 			if !transientStatus(resp.StatusCode) || try >= len(httpRetries) {
-				return nil, &httpStatusError{URL: rawURL, Code: resp.StatusCode, Status: resp.Status}
+				return nil, "", &httpStatusError{URL: rawURL, Code: resp.StatusCode, Status: resp.Status}
 			}
 			wait = retryAfter(resp.Header.Get("Retry-After"))
 		}
 		wait = max(wait, httpRetries[try])
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, "", ctx.Err()
 		case <-time.After(wait):
 		}
 	}
+}
+
+// contentRangeFrom is the first byte of a Content-Range header,
+// "bytes 100-199/200", or -1.
+func contentRangeFrom(h string) int64 {
+	rest, ok := strings.CutPrefix(h, "bytes ")
+	from, _, ok2 := strings.Cut(rest, "-")
+	n, err := strconv.ParseInt(from, 10, 64)
+	if !ok || !ok2 || err != nil {
+		return -1
+	}
+	return n
+}
+
+// httpResumes is how many times in a row a body whose connection drops (a
+// proxy resetting it, a network change, nothing arriving for
+// httpStallTimeout) is asked for again from where it stopped, and
+// httpResumeWait how long before the first time, doubling after each:
+// a big update over a slow proxy goes on instead of failing part way and
+// starting over. A resume that brings bytes starts the count again.
+var (
+	httpResumes    = 5
+	httpResumeWait = time.Second
+)
+
+// resumingBody is the body of httpGet: when its connection fails part way
+// it asks for the rest with a Range request (httpResumes).
+type resumingBody struct {
+	ctx       context.Context
+	url       string
+	body      io.ReadCloser // nil after a failure, until resumed
+	validator string
+	n         int64 // bytes read
+	failures  int   // resumes in a row without a byte
+	err       error // the failure being resumed from
+}
+
+func (b *resumingBody) Read(p []byte) (int, error) {
+	for {
+		if b.body == nil {
+			if err := b.resume(); err != nil {
+				return 0, err
+			}
+		}
+		n, err := b.body.Read(p)
+		b.n += int64(n)
+		if n > 0 {
+			b.failures = 0
+		}
+		if err == nil || err == io.EOF || b.ctx.Err() != nil || b.failures >= httpResumes {
+			return n, err
+		}
+		b.body.Close()
+		b.body, b.err = nil, err
+		if n > 0 {
+			return n, nil // the next read resumes
+		}
+	}
+}
+
+// resume waits, then asks for the rest of the body, or returns the failure
+// it resumes from once that does not work.
+func (b *resumingBody) resume() error {
+	wait := httpResumeWait << b.failures
+	b.failures++
+	select {
+	case <-b.ctx.Done():
+		return b.err
+	case <-time.After(wait):
+	}
+	log.Printf("mygo: resuming %s from byte %d after: %v", b.url, b.n, b.err)
+	body, _, err := httpRequest(b.ctx, b.url, b.n, b.validator)
+	if err != nil {
+		return fmt.Errorf("%w (resuming: %v)", b.err, err)
+	}
+	b.body = body
+	return nil
+}
+
+func (b *resumingBody) Close() error {
+	if b.body == nil {
+		return nil
+	}
+	return b.body.Close()
 }
 
 // httpStatusError is a response of httpGet other than 200 OK. A 404 is
@@ -875,8 +991,30 @@ var updateHTTPClient struct {
 }
 
 func httpClient() *http.Client {
+	if rt := updateTransport.Load(); rt != nil {
+		return &http.Client{Transport: *rt, CheckRedirect: httpsRedirects}
+	}
 	updateHTTPClient.once.Do(func() { updateHTTPClient.client = newHTTPClient() })
 	return updateHTTPClient.client
+}
+
+// updateTransport is the transport of SetTransport, nil for the default.
+var updateTransport atomic.Pointer[http.RoundTripper]
+
+// SetTransport sets how the updater reaches the network for the feed of
+// mygo.config.ts — its checks and downloads — for an app with a way of its
+// own: a proxy rule of its settings, retries, a fallback to a direct
+// connection. nil, the default, is the transport of package netproxy,
+// which follows the system's proxy settings. Redirects still go to HTTPS
+// only, downloads that break off still resume, and what is downloaded is
+// still checked against the release signatures. An UpdateSource of
+// SetSource downloads its own way. It may be called from any goroutine.
+func (u *UpdaterModule) SetTransport(rt http.RoundTripper) {
+	if rt == nil {
+		updateTransport.Store(nil)
+		return
+	}
+	updateTransport.Store(&rt)
 }
 
 func newHTTPClient() *http.Client {
@@ -893,10 +1031,14 @@ func httpsRedirects(req *http.Request, via []*http.Request) error {
 		return errors.New("stopped after 10 redirects")
 	}
 	if req.URL.Scheme != "https" && !(req.URL.Scheme == "http" && isLoopback(req.URL.Hostname())) {
-		return fmt.Errorf("refusing a redirect to %s: updates need HTTPS", req.URL.Redacted())
+		return fmt.Errorf("refusing a redirect to %s: %w", req.URL.Redacted(), errNeedHTTPS)
 	}
 	return nil
 }
+
+// errNeedHTTPS is the error of a redirect to plain HTTP, which asking again
+// does not mend.
+var errNeedHTTPS = errors.New("updates need HTTPS")
 
 // stalledBody cancels the request of a body that stops arriving, and says
 // so instead of the canceled request it would otherwise be read as.
