@@ -74,6 +74,20 @@ type Theme struct {
 	ScrollbarStyle ScrollbarStyle
 	// Radius rounds the corners of controls.
 	Radius float32
+	// DialogRadius rounds the corners of dialogs: Modal's and
+	// AlertDialog's panels (0 is 2.5 units of Spacing).
+	DialogRadius float32
+	// PopupRadius rounds the panels that drop from a control: Popover's,
+	// PopoverMenu's, the lists of Select, Combobox and Autocomplete,
+	// DatePicker's and ColorPicker's panels (0 is Radius+2). Set, the
+	// options and items in those lists are rounded with it less the
+	// panels' padding, concentric with the panel (at least 4); 0 leaves
+	// them at Radius.
+	PopupRadius float32
+	// ToastRadius rounds the toasts the view does not build itself (0 is
+	// 2 units of Spacing); TooltipRadius tooltips (0 is 1.25 units).
+	ToastRadius   float32
+	TooltipRadius float32
 	// Spacing is the unit of the room widgets leave inside and between
 	// their parts: their paddings and gaps, and the sizes of check boxes,
 	// switches, sliders and the rows of tables and trees, are multiples
@@ -136,6 +150,30 @@ func (t *Theme) Space(n float32) float32 {
 		s = 4
 	}
 	return n * s
+}
+
+// dialogRadius, popupRadius, toastRadius and tooltipRadius are the
+// corners of dialogs, popups, toasts and tooltips: the theme's, or the
+// defaults.
+func (t *Theme) dialogRadius() float32  { return orRadius(t.DialogRadius, t.Space(2.5)) }
+func (t *Theme) popupRadius() float32   { return orRadius(t.PopupRadius, t.Radius+2) }
+func (t *Theme) toastRadius() float32   { return orRadius(t.ToastRadius, t.Space(2)) }
+func (t *Theme) tooltipRadius() float32 { return orRadius(t.TooltipRadius, t.Space(1.25)) }
+
+// popupOptionRadius rounds an option in a popup's list (padded by one
+// unit): concentric with the panel when PopupRadius is set, else Radius.
+func (t *Theme) popupOptionRadius() float32 {
+	if t.PopupRadius <= 0 {
+		return t.Radius
+	}
+	return max(t.PopupRadius-t.Space(1), 4)
+}
+
+func orRadius(r, def float32) float32 {
+	if r > 0 {
+		return r
+	}
+	return def
 }
 
 // inactiveAccent returns what the accent fades to in a window that is not

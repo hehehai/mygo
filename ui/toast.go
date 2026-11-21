@@ -352,7 +352,7 @@ func (rt *engine) buildToasts(c *context) {
 		viewport.Bottom(t.Space(6)).AlignItems(Center).Gap(t.Space(2))
 		for _, ts := range toasts {
 			p := coreToastBase(c, ts)
-			box := p.Root.Row().AlignItems(Center).Gap(t.Space(4)).Padding(t.Space(2.5), t.Space(4)).Radius(t.Space(2)).MaxWidth(c.w - t.Space(12)).
+			box := p.Root.Row().AlignItems(Center).Gap(t.Space(4)).Padding(t.Space(2.5), t.Space(4)).Radius(t.toastRadius()).MaxWidth(c.w - t.Space(12)).
 				Background(fill).TextColor(text)
 			box.Shadow(0, 6, 20, 0, RGBA(0, 0, 0, 0.25))
 			// It fades in, and out at the end.

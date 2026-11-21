@@ -295,7 +295,7 @@ func styleOptions(c *context, p *comboboxParts, options []string) *node {
 		panel.MaxHeight(t.Space(70))
 		panel.flags |= flagScrollY | flagHover
 		for _, opt := range options {
-			item := p.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius)
+			item := p.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.popupOptionRadius())
 			if item.Highlighted() {
 				item.Background(t.AccentFill()).TextColor(t.AccentText)
 			}

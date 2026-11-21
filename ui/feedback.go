@@ -186,7 +186,7 @@ func coreAlertDialog(c *context, open *bool, title, message string, buttons ...s
 			// in a narrower window the buttons wrap, and a label too long for
 			// it ends in an ellipsis.
 			room := c.w - t.Space(10)
-			panel := coreColumn(c).MinWidth(min(t.Space(75), room)).MaxWidth(room).Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.Space(2.5)).Background(t.Background).Role(RoleAlertDialog)
+			panel := coreColumn(c).MinWidth(min(t.Space(75), room)).MaxWidth(room).Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.dialogRadius()).Background(t.Background).Role(RoleAlertDialog)
 			panel.Label(title)
 			panel.description = message
 			panel.Shadow(0, 10, 30, 0, RGBA(0, 0, 0, 0.3))

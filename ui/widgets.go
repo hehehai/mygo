@@ -687,7 +687,7 @@ func coreModal(c *context, open *bool, fn func()) *node {
 	t := c.theme
 	return coreDialogBase(c, open, func(back, panel *node) {
 		back.Background(RGBA(0, 0, 0, 0.4))
-		panel.Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.Space(2.5)).Background(t.Background).MaxWidth(c.w - t.Space(10)).MaxHeight(c.h - t.Space(10))
+		panel.Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.dialogRadius()).Background(t.Background).MaxWidth(c.w - t.Space(10)).MaxHeight(c.h - t.Space(10))
 		panel.Shadow(0, 10, 30, 0, RGBA(0, 0, 0, 0.3))
 		fn()
 	})
@@ -710,7 +710,7 @@ func corePopover(c *context, anchor *node, open *bool, fn func()) *node {
 // stylePanel gives the panel of a popup the theme's look.
 func stylePanel(c *context, panel *node) {
 	t := c.theme
-	panel.Margin(t.Space(1), 0, 0, 0).Padding(t.Space(1)).Radius(t.Radius+2).Background(t.Background).Border(1, t.Border)
+	panel.Margin(t.Space(1), 0, 0, 0).Padding(t.Space(1)).Radius(t.popupRadius()).Background(t.Background).Border(1, t.Border)
 	panel.Shadow(0, 6, 20, 0, RGBA(0, 0, 0, 0.18))
 }
 
@@ -730,7 +730,7 @@ func coreSelect(c *context, selected *string, options []string) *node {
 		// Options past the room the window has scroll.
 		panel.flags |= flagScrollY | flagHover
 		for _, opt := range options {
-			item := sel.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius)
+			item := sel.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.popupOptionRadius())
 			switch {
 			case item.Highlighted():
 				item.Background(t.AccentFill()).TextColor(t.AccentText)
