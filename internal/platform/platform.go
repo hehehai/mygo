@@ -773,7 +773,8 @@ type Page interface {
 	OpenDevTools()
 	CloseDevTools()
 	IsDevToolsOpened() bool
-	// CapturePage takes a PNG snapshot of the visible page.
+	// CapturePage takes a PNG snapshot of the visible page; cb may run
+	// on any thread.
 	CapturePage(cb func(png []byte, err error))
 	// PrintToPDF renders the page as a PDF document.
 	PrintToPDF(opts PDFOptions, cb func(pdf []byte, err error))
@@ -1653,6 +1654,15 @@ type TabBar interface {
 type TabsHandler interface {
 	// TabSelected reports that the user chose tab i.
 	TabSelected(i int)
+}
+
+// NavigationFilter is a WindowHandler that may decide navigations itself,
+// later: FilterNavigation returns false when it does not (WillNavigate
+// decides, as before), else true and calls decide once, from any
+// goroutine; the backend then asks WillNavigate on the main thread when
+// it allows.
+type NavigationFilter interface {
+	FilterNavigation(nav Navigation, decide func(allow bool)) bool
 }
 
 // NavigationHandler is a WindowHandler told that the user popped its

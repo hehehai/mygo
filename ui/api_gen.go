@@ -374,6 +374,21 @@ func (_handle *Context) DisableAnimations() {
 	_ctx.DisableAnimations()
 }
 
+// DropGlide drops the rest of the touchpad's glide under way (the scroll
+// events with Momentum after the fingers lifted) before any element has
+// them, to the glide's end or until a new gesture begins (a scroll event
+// GestureBegan without Momentum): a view that turned to another page with
+// a gesture, or while it glided, keeps the glide from scrolling what it
+// shows now. A mouse wheel has no glide. macOS tells a glide's phases;
+// elsewhere a glide is dropped until a scroll without Momentum.
+func (_handle *Context) DropGlide() {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.DropGlide()
+}
+
 // FocusTakesText reports whether the element with the keyboard focus takes
 // text, typed or composed: a text input or text area, or an editor of
 // rich text or code, that is not read only, or an element that takes text

@@ -3,7 +3,12 @@ package mygo
 import (
 	"errors"
 	"fmt"
+	"image"
+	"image/draw"
 	"log"
+	"reflect"
+	"sync"
+	"time"
 
 	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/internal/surface"
@@ -28,7 +33,13 @@ import (
 // what the view paints after it, as popovers and menus, while the view
 // builds it; it keeps its page while it does not show, until Destroy or
 // until its window closes. Its methods are safe from any goroutine.
-type WebView struct{ w *Window }
+type WebView struct {
+	w *Window
+	// under is the underlay last set (SetUnderlay), underRect where.
+	underMu   sync.Mutex
+	under     WebViewUnderlay
+	underRect platform.RectF
+}
 
 // WebViewOptions configure Window.NewWebView.
 type WebViewOptions struct {
@@ -111,7 +122,7 @@ func (w *Window) newWebView(opts WebViewOptions, bg *background) (*WebView, erro
 	}
 	pw.native = &webViewNative{Window: w.native, web: nv}
 	startContentRules(nv, opts.Page.ContentRules)
-	v := &WebView{pw}
+	v := &WebView{w: pw}
 	pw.webView = v
 
 	windows.Lock()
@@ -137,6 +148,166 @@ func (v *WebView) Focus() {
 			n.web.Focus()
 		}
 	})
+}
+
+// WebViewGestures says which of a touchpad's gestures over a web view go
+// to the window's view, as if the pointer were on it (to elements of the
+// view around the page that page through items or close it), and whether
+// the page zooms (WebView.SetGestures). The zero value leaves them all to
+// the page, which does not zoom.
+type WebViewGestures struct {
+	// Sideways: a gesture that goes sideways first (its first points),
+	// with its glide, while the page is not zoomed in: for a page that
+	// does not scroll sideways, a video, a PDF at its fit. A three-finger
+	// swipe goes to the view too.
+	Sideways bool
+	// PinchIn: a pinch whose fingers close first while the page is at its
+	// own size (not zoomed in), with the rest of the gesture: a view that
+	// closes on a pinch in, as a photo viewer does. A pinch out, and any
+	// once the page is zoomed in, stays the page's. Without Zoom, a smart
+	// zoom (two fingers tapped twice) goes to the view too.
+	PinchIn bool
+	// Zoom: the page zooms on a pinch and a smart zoom, as a browser's;
+	// without it they do nothing to it.
+	Zoom bool
+	// Edges: a gesture that goes first toward an edge nothing under the
+	// pointer can scroll toward (the page, a box in it, a PDF), with its
+	// glide. A gesture that reaches the edge stays the page's to its end:
+	// the next one, toward it, is the view's. The page does not bounce at
+	// those edges. When the page may still scroll that way, its start
+	// waits for WebKit's answer (40 ms at most).
+	Edges WebViewEdges
+	// EdgesSideways makes Edges the left and right edges; else they are
+	// the top and the bottom.
+	EdgesSideways bool
+}
+
+// WebViewEdges is what a gesture toward an edge the page is scrolled to
+// does (WebViewGestures.Edges).
+type WebViewEdges int
+
+const (
+	// EdgesPage leaves it to the page.
+	EdgesPage WebViewEdges = iota
+	// EdgesScrolled is EdgesAll (it once trusted the main frame's
+	// scrolling alone, which a PDF's plugin does not move).
+	EdgesScrolled
+	// EdgesAll gives it to the view: nothing under the pointer scrolls
+	// that way (a page that fits is at all its edges).
+	EdgesAll
+)
+
+// SetGestures shares a touchpad's gestures over the web view between its
+// page and the window's view as g says (a mouse wheel's are always the
+// page's). Each call starts afresh, the page at its own size (call it for
+// each page loaded); a page set not to zoom is set back to its own size,
+// whatever PageOptions.PinchZoom said. While g routes some scrolling, the
+// glide of a gesture under way as it is called (the view's that turned to
+// the page loaded, or the page before's) is dropped: it does not scroll
+// the new page (ui's Context.DropGlide does the same for the view's own
+// elements). A web view made with ScrollToContainer scrolls the
+// container: its scrolling is not shared. macOS; elsewhere it does
+// nothing. Setting MYGO_WEBVIEW_GESTURES writes where the gestures went
+// to the log.
+func (v *WebView) SetGestures(g WebViewGestures) {
+	onMain(func() {
+		if n, ok := v.w.native.(*webViewNative); ok {
+			if s, ok := n.web.(interface {
+				SetGestures(sideways, pinchIn, zoom bool, edges int, edgesSideways bool)
+			}); ok {
+				s.SetGestures(g.Sideways, g.PinchIn, g.Zoom, int(g.Edges), g.EdgesSideways)
+			}
+		}
+	})
+}
+
+// SetPDFControls shows (on, the default) or hides the controls the
+// platform's web view shows over a PDF (WebKit's HUD on macOS: zoom out,
+// zoom in, open in Preview, save), for an app that draws its own (zoom
+// with Page.SetZoomFactor: a PDF's page zoom is its scale). The setting
+// holds for the pages the web view loads after it too. macOS; elsewhere
+// it does nothing.
+func (v *WebView) SetPDFControls(on bool) {
+	onMain(func() {
+		if n, ok := v.w.native.(*webViewNative); ok {
+			if s, ok := n.web.(interface{ SetPDFHUD(bool) }); ok {
+				s.SetPDFHUD(on)
+			}
+		}
+	})
+}
+
+// WebViewUnderlay is a picture under a web view's page
+// (WebView.SetUnderlay).
+type WebViewUnderlay struct {
+	// Image is the picture (nil: none).
+	Image image.Image
+	// X, Y, Width, Height is where it is stretched across: a rectangle of
+	// the window's content in DIPs, as package ui lays it out (the whole
+	// window, say); it shows only where the web view does.
+	X, Y, Width, Height float64
+	// Fade is how long a new picture fades in over the one before (0: at
+	// once).
+	Fade time.Duration
+}
+
+// SetUnderlay shows u's picture under the web view's page, where the page
+// paints nothing: with its background transparent (SetBackgroundColor
+// "transparent", a page whose own is transparent), what the window's view
+// paints around the web view (a picture across the window) goes on under
+// the page, past its ends as it is pulled (the rubber band) too. A
+// picture the same as the last (its Image the same value) only moves.
+// macOS; elsewhere it does nothing.
+func (v *WebView) SetUnderlay(u WebViewUnderlay) {
+	r := platform.RectF{X: u.X, Y: u.Y, W: u.Width, H: u.Height}
+	v.underMu.Lock()
+	kept := sameImage(u.Image, v.under.Image)
+	same := kept && (u.Image == nil || r == v.underRect)
+	moved := kept && u.Image != nil && r != v.underRect
+	v.under, v.underRect = u, r
+	v.underMu.Unlock()
+	if same {
+		return
+	}
+	var pix []byte
+	var stride, w, h int
+	if u.Image != nil && !moved {
+		b := u.Image.Bounds()
+		m, ok := u.Image.(*image.RGBA)
+		if !ok || m.Rect.Min != (image.Point{}) {
+			m = image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+			draw.Draw(m, m.Rect, u.Image, b.Min, draw.Src)
+		}
+		pix, stride, w, h = m.Pix, m.Stride, b.Dx(), b.Dy()
+	}
+	onMain(func() {
+		n, ok := v.w.native.(*webViewNative)
+		if !ok {
+			return
+		}
+		s, ok := n.web.(interface {
+			SetUnderlay(pix []byte, stride, width, height int, r platform.RectF, fade float64)
+			SetUnderlayRect(r platform.RectF)
+		})
+		if !ok {
+			return
+		}
+		if moved {
+			s.SetUnderlayRect(r)
+			return
+		}
+		s.SetUnderlay(pix, stride, w, h, r, u.Fade.Seconds())
+	})
+}
+
+// sameImage reports whether a and b are the same picture: both none, or
+// the same value of a comparable type (a pointer).
+func sameImage(a, b image.Image) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	return ta == tb && ta.Comparable() && a == b
 }
 
 // SetBackgroundColor sets the color filling the web view until its page

@@ -10,11 +10,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ebitengine/purego/objc"
 
 	"github.com/egoist/mygo/internal/bridge"
+	"github.com/egoist/mygo/internal/pdffit"
 	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/wheelroute"
 )
 
 const (
@@ -177,6 +180,23 @@ type window struct {
 	// pipActive tells that the page's document has a video in picture in
 	// picture, as its pipScript last said.
 	pipActive bool
+	// gest says which of a touchpad's gestures over a web view go to the
+	// content, scroll and pinch route the gesture under way, zoomed counts
+	// the page's zoom, pdf is a PDF's fit, known once it zooms
+	// (webview_gestures.go).
+	gest   gestureRouting
+	scroll wheelroute.Router
+	pinch  pinchRoute
+	zoomed zoomCount
+	pdf    pdffit.Fit
+	// noPDFHUD hides WebKit's controls over a PDF (webview_pdfhud.go).
+	noPDFHUD bool
+	// underlay is a picture under a web view's page, across underRect;
+	// paneAt is where its pane was last placed, paneSize the size of the
+	// pane's bounds (webview_underlay.go).
+	underlay          id
+	underRect, paneAt platform.RectF
+	paneSize          NSSize
 }
 
 func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler) (platform.Window, error) {
@@ -1785,8 +1805,13 @@ func (w *window) CallAsyncFunction(body string, cb func(string, error)) {
 	})
 }
 
-func (w *window) SetZoom(f float64) { msgSetFloat(w.web, sel("setPageZoom:"), f) }
-func (w *window) Zoom() float64     { return msgFloat(w.web, sel("pageZoom")) }
+func (w *window) SetZoom(f float64) {
+	if w.gest.zoom {
+		w.pdfZooms() // a PDF's page zoom is its scale (webview_gestures.go)
+	}
+	msgSetFloat(w.web, sel("setPageZoom:"), f)
+}
+func (w *window) Zoom() float64 { return msgFloat(w.web, sel("pageZoom")) }
 
 func (w *window) SetUserAgent(ua string) {
 	withPool(func() {
@@ -2136,7 +2161,16 @@ func (w *window) CapturePage(cb func([]byte, error)) {
 				cb(nil, nsError(err))
 				return
 			}
-			withPool(func() { cb(pngFromImage(img), nil) })
+			// Encoded off the main thread: a window's worth at scale 2
+			// took the main thread 30 ms (TIFF, then PNG), the page's
+			// frames dropped while it did. The image is WebKit's,
+			// immutable: read on another thread, retained until then.
+			retain(img)
+			go withPool(func() {
+				png := pngFromImage(img)
+				release(img)
+				cb(png, nil)
+			})
 		})
 		defer blk.Release()
 		send(w.web, "takeSnapshotWithConfiguration:completionHandler:", 0, uintptr(blk))
@@ -2373,6 +2407,7 @@ func registerWindowClasses() {
 	})
 
 	registerClipViewClass()
+	registerUnderlayViewClass() // webview_underlay.go
 	classDef("MyGoWebView", "WKWebView", nil, append(append(webViewMethods(), contextMenuMethods()...), []objc.MethodDef{
 		method("mouseDown:", func(self id, cmd objc.SEL, ev id) {
 			if w := theBackend.byWebView[self]; w != nil {
@@ -2610,6 +2645,31 @@ func registerWindowClasses() {
 						w.programmatic = false
 						nav.Unasked = true
 					}
+					if f, ok := w.h.(platform.NavigationFilter); ok {
+						// The filter decides, now or later: the handler is
+						// kept until it does.
+						held := blockCopy(handler)
+						var once sync.Once
+						if f.FilterNavigation(nav, func(ok bool) {
+							once.Do(func() {
+								b().runOnMain(func() {
+									if w.closed {
+										ok = false
+									} else if ok {
+										ok = w.h.WillNavigate(nav)
+										if ok && nav.IsMainFrame {
+											w.leavingPage()
+										}
+									}
+									callBlock(held, boolArg(ok))
+									blockRelease(held)
+								})
+							})
+						}) {
+							return
+						}
+						blockRelease(held)
+					}
 					allow = w.h.WillNavigate(nav)
 					if allow && nav.IsMainFrame {
 						w.leavingPage()
@@ -2691,6 +2751,7 @@ func registerWindowClasses() {
 			}),
 			method("webView:didCommitNavigation:", func(self id, _ objc.SEL, web, nav id) {
 				if w := b().windowFor(self); w != nil {
+					w.pageLoaded() // a PDF's fit is the next page's to find (webview_gestures.go)
 					w.h.NavigationCommitted(w.URL())
 				}
 			}),
@@ -2771,6 +2832,13 @@ func registerWindowClasses() {
 			method("webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:", func(self id, _ objc.SEL, web, prompt, defaultText, frame id, handler uintptr) {
 				w := b().windowFor(self)
 				jsPrompt(w, goString(prompt), goString(defaultText), handler)
+			}),
+			// WKUIDelegatePrivate: nothing scrolled for a wheel event
+			// (SetGestures' edges, webview_gestures.go).
+			method("_webView:didNotHandleWheelEvent:", func(self id, _ objc.SEL, web, ev id) {
+				if w := b().windowFor(self); w != nil && w.web == web {
+					w.pageDidNotScroll(ev)
+				}
 			}),
 			method("webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:", func(self id, _ objc.SEL, web, params, frame id, handler uintptr) {
 				w := b().windowFor(self)
