@@ -545,6 +545,23 @@ func TestUpdaterBetaChannel(t *testing.T) {
 	}
 }
 
+func TestUpdaterConfigured(t *testing.T) {
+	feed, key := packageUpdateFeed, packageUpdateKey
+	defer func() { packageUpdateFeed, packageUpdateKey = feed, key }()
+	packageUpdateFeed, packageUpdateKey = "", ""
+	if Updater.Configured() {
+		t.Error("configured without a feed")
+	}
+	packageUpdateFeed = "https://example.com/update.json"
+	if Updater.Configured() {
+		t.Error("configured without a key")
+	}
+	packageUpdateKey = "k"
+	if !Updater.Configured() {
+		t.Error("not configured with a feed and a key")
+	}
+}
+
 // errSource fails with err.
 type errSource struct{ err error }
 
