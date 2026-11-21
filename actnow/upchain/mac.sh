@@ -150,7 +150,10 @@ EOF
   "updates": {"publicKey": "$PUB", "url": "$url", "privateKey": "$W/keys/mygo-update.key"$prekey}
 }
 EOF
-  run "tidy-$version" bash -c "cd '$dir' && go mod tidy" || return 1
+  # Not go mod tidy, which wants the packages of every platform (the old
+  # tree has only those the Mac builds): MyGo's go.sum, and -mod=mod.
+  cp "$mygo/go.sum" "$dir/go.sum"
+  run "deps-$version" bash -c "cd '$dir' && GOOS=darwin go build -o /dev/null ." || return 1
   run "build-$version" bash -c "cd '$dir' && '$W/bin/mygo-$cli' build -sign - -skip-dmg -skip-notarize -platform '$PLATFORM'"
 }
 
@@ -242,7 +245,7 @@ build "$W/p1" fork "$V1" "$NEW_STYLE" || die "building $V1 with the fork"
 OUT1="$W/p1/build/$TGT"
 reference "$V1" "$OUT1"
 if run sitecheck1 "$W/bin/upchain" sitecheck -site "$SITE" -app "$FEED" -version "$V1" -pub "$PUB" -dir "$OUT1" -release; then
-  pass "$V1: the site's checks (names, URLs in $(case $V1 in *-*) echo beta/ ;; *) echo the releases\' directory ;; esac), sizes, signatures, release signatures)"
+  pass "$V1: the site's checks (names, URLs in the beta channel's directory, sizes, signatures, release signatures)"
 else fail "$V1: the site's checks"; fi
 grep -q "\"from\": \"$OLD_VERSION\"" "$OUT1/update-$TGT.json" && pass "$V1 has a delta from $OLD_VERSION" || fail "$V1 has no delta from $OLD_VERSION"
 run publish1 "$W/bin/upchain" publish -feed "$W/feed/updates/$FEED" "$OUT1"/*.tar.gz "$OUT1"/*.delta "$OUT1"/update-*.json || die "publishing $V1"

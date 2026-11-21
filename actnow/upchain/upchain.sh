@@ -20,6 +20,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+export PATH="$HOME/.local/go/bin:$PATH"
 fork=$(git -C "$here" rev-parse --show-toplevel)
 helper=${UPCHAIN_REPOS:-$HOME/helper}
 host=mac-air
@@ -74,7 +75,7 @@ git -C "$repo" archive "$tag" third_party/mygo | tar -x -C "$stage/full" --strip
 (
   cd "$stage/full"
   export GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 GOFLAGS=-mod=mod
-  go list -deps -f '{{if .Module}}{{if eq .Module.Path "github.com/egoist/mygo"}}{{.Dir}}|{{join .EmbedFiles "|"}}{{end}}{{end}}' . ./cmd/mygo
+  go list -deps -f '{{if .Module}}{{if eq .Module.Path "github.com/egoist/mygo"}}{{.Dir}}|{{join .EmbedFiles " "}}{{end}}{{end}}' . ./cmd/mygo
 ) | while IFS='|' read -r dir embeds; do
   rel=${dir#"$stage/full"}; rel=${rel#/}
   mkdir -p "$stage/old/$rel"
@@ -115,21 +116,44 @@ remote="$root/$id"
 # The old tree goes to a cache on the Mac (once per app and tag); the fork
 # is fetched there from GitHub by mac.sh.
 oldkey="old-$feed-$tag"
-ssh_mac() { ssh -o BatchMode=yes -o ConnectTimeout=60 -o ServerAliveInterval=30 "$host" "$@"; }
+# ssh and rsync to the Mac, tried again every 30 s, 10 times in all, when the
+# connection fails (255, rsync's 12/30/35); the command's own failures
+# return at once.
+retry() {
+  local i code
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    "$@" && code=0 || code=$?
+    case $code in
+      255 | 12 | 30 | 35) [ $i -lt 10 ] && { echo "connection failed ($code), again in 30 s" >&2; sleep 30; } ;;
+      *) return $code ;;
+    esac
+  done
+  return $code
+}
+ssh_mac() { retry ssh -o BatchMode=yes -o ConnectTimeout=60 -o ServerAliveInterval=30 "$host" "$@"; }
+rsync_mac() { retry rsync "$@"; }
 ssh_mac "mkdir -p '$remote' '$root/cache'"
 if ! ssh_mac "test -f '$root/cache/$oldkey/.complete'"; then
-  rsync -a --delete --timeout=300 "$stage/old/" "$host:$root/cache/$oldkey/"
+  rsync_mac -a --delete --timeout=300 "$stage/old/" "$host:$root/cache/$oldkey/"
   ssh_mac "touch '$root/cache/$oldkey/.complete'"
 fi
 printf 'OLD_CACHE=%s\n' "../cache/$oldkey" >>"$stage/run.env"
-rsync -a --timeout=300 "$stage/upchain" "$stage/run.env" "$host:$remote/"
+rsync_mac -a --timeout=300 "$stage/upchain" "$stage/run.env" "$host:$remote/"
 status=0
 # lockf: one Mac test at a time; setpgrp: the run's own process group,
 # which its watchdog stops.
-ssh_mac "cd '$remote' && lockf -k /tmp/mygo-mac.lock perl -e 'setpgrp(0,0); exec @ARGV' bash upchain/mac.sh ." || status=$?
+# In the background on the Mac (nohup), so a dropped connection does not
+# stop it; a short connection every few minutes looks for its end.
+ssh_mac "cd '$remote' && rm -f exit && nohup bash -c \"lockf -k /tmp/mygo-mac.lock perl -e 'setpgrp(0,0); exec @ARGV' bash upchain/mac.sh .; echo \\\$? >exit\" >run.log 2>&1 </dev/null &"
+echo "running on $host in ~/$remote (run.log, report.txt); looking every ${UPCHAIN_POLL:-180} s"
+while sleep "${UPCHAIN_POLL:-180}"; do
+  if code=$(ssh_mac "cat '$remote/exit' 2>/dev/null"); then
+    [ -n "$code" ] && { status=$code; break; }
+  fi
+done
 out="${UPCHAIN_OUT:-$PWD/upchain-out}/$id"
 mkdir -p "$out"
-rsync -a "$host:$remote/report.txt" "$host:$remote/w/logs" "$host:$remote/w/requests.log" "$out/" 2>/dev/null || true
+rsync_mac -a "$host:$remote/report.txt" "$host:$remote/run.log" "$host:$remote/w/logs" "$host:$remote/w/requests.log" "$out/" || true
 if [ "$keep" = 0 ]; then
   ssh_mac "rm -rf '$remote'"
 fi
