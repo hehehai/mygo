@@ -157,6 +157,9 @@ type view struct {
 	laidLook   lookKey
 	padX, padY float32
 	rect       ui.Rect
+	// clipInset and clipRadius are the box its painting stays in: inside
+	// a styled editor's border and corners.
+	clipInset, clipRadius float32
 	// clip is the part of the element the painter's clip showed in the
 	// last paint, from its top, while clipped is true: an editor as tall
 	// as its text, in a scroll container, shows a window of it.
@@ -368,8 +371,10 @@ func (v *view) setLook(t *ui.Theme, styled bool) {
 	}
 	if styled {
 		v.padX, v.padY = th.Padding[0], th.Padding[1]
+		v.clipInset, v.clipRadius = 1, max(t.Radius-1, 0)
 	} else {
 		v.padX, v.padY = 0, 0
+		v.clipInset, v.clipRadius = 0, 0
 	}
 }
 
