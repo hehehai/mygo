@@ -154,6 +154,26 @@ mygo.NewNotification(mygo.NotificationOptions{
 }).Show()
 ```
 
+### Buttons on macOS
+
+`RegisterNotificationCategory` declares a kind of notification and its
+buttons, and `Category` names it; a button pressed reaches the
+notification's `OnAction` and `App.OnNotificationAction`, with the text
+typed for an `Input` one (a reply). Other platforms show no buttons:
+
+```go
+mygo.RegisterNotificationCategory("mail", []mygo.NotificationAction{
+	{ID: "archive", Title: "Archive"},
+	{ID: "reply", Title: "Reply", Input: true, InputButton: "Send"},
+})
+mygo.App.OnNotificationAction(func(id, action, text string) {
+	if action == "reply" {
+		sendReply(id, text)
+	}
+})
+mygo.NewNotification(mygo.NotificationOptions{ID: msg.ID, Title: "Ada", Body: msg.Text, Category: "mail"}).Show()
+```
+
 ### Sender avatars on macOS
 
 An incoming direct message can supply a sender to display a prominent

@@ -260,3 +260,39 @@ func TestAppNotificationClick(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestNotificationActions: a kind's buttons reach the platform with the
+// notifications that name it; a button pressed (with text typed for a
+// reply) reaches the notification's OnAction and the app's
+// OnNotificationAction, also for one of an earlier run.
+func TestNotificationActions(t *testing.T) {
+	RegisterNotificationCategory("mail", []NotificationAction{
+		{ID: "archive", Title: "Archive"},
+		{ID: "reply", Title: "Reply", Input: true, InputButton: "Send", Placeholder: "Message"},
+		{ID: "delete", Title: "Delete", Destructive: true},
+	})
+	n := showNotification(t, NotificationOptions{ID: "thread-1", Title: "Grace", Body: "Lunch?", Category: "mail"})
+	got := fb.Notification("thread-1")
+	if got == nil || got.Category != "mail" || len(got.Actions) != 3 || !got.Actions[1].Input || got.Actions[1].InputButton != "Send" || !got.Actions[2].Destructive {
+		t.Fatalf("platform notification %+v", got)
+	}
+	var own, app []string
+	n.OnAction(func(action, text string) { own = append(own, action+":"+text) })
+	off := App.OnNotificationAction(func(id, action, text string) { app = append(app, id+"/"+action+":"+text) })
+	defer off()
+	onMain(func() { fb.PressNotificationAction("thread-1", "reply", "Sure, 12:30") })
+	onMain(func() { fb.PressNotificationAction("thread-1", "archive", "") })
+	// One of an earlier run: no Notification holds it.
+	onMain(func() { fb.PressNotificationAction("thread-9", "archive", "") })
+	if !slices.Equal(own, []string{"reply:Sure, 12:30", "archive:"}) {
+		t.Errorf("OnAction: %q", own)
+	}
+	if !slices.Equal(app, []string{"thread-1/reply:Sure, 12:30", "thread-1/archive:", "thread-9/archive:"}) {
+		t.Errorf("OnNotificationAction: %q", app)
+	}
+	// Without a category, no buttons.
+	showNotification(t, NotificationOptions{ID: "plain", Title: "x"})
+	if p := fb.Notification("plain"); p.Category != "" || len(p.Actions) != 0 {
+		t.Errorf("plain %+v", p)
+	}
+}

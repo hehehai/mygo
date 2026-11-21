@@ -53,6 +53,9 @@ type Backend struct {
 	notifyAnswered  bool
 	notifyWaiting   []waitingNotification
 	notifyPreparing map[string]func()
+	// notifyCategories are the kinds of notification given to the
+	// center, by id: their buttons as last given.
+	notifyCategories map[string][]platform.NotificationAction
 
 	stepping       int
 	quitAfterModal bool

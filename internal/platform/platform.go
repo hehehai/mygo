@@ -243,6 +243,9 @@ type AppHandler interface {
 	// for apps has for one, as it writes them, "" when it bound none.
 	HotkeyBound(id int, keys string)
 	NotificationClicked(id string)
+	// NotificationAction reports a notification's button pressed, with the
+	// text typed when it asks for some (NotificationAction.Input).
+	NotificationAction(id, action, text string)
 	// MediaCommand reports a media key or a remote command for what
 	// NowPlaying shows; position is where MediaSeek asks to go.
 	MediaCommand(cmd MediaCommand, position time.Duration)
@@ -1545,6 +1548,25 @@ type Notification struct {
 	// it gives one.
 	Image  []byte
 	Sender *NotificationSender
+	// Category names the notification's kind and Actions its buttons
+	// (UNNotificationCategory on macOS; the platforms without them ignore
+	// both).
+	Category string
+	Actions  []NotificationAction
+}
+
+// NotificationAction is a button of a kind of notification.
+type NotificationAction struct {
+	ID    string
+	Title string
+	// Input asks for text (a reply): InputButton and Placeholder name the
+	// field's button and hint.
+	Input       bool
+	InputButton string
+	Placeholder string
+	Destructive bool
+	// Foreground brings the app to the front.
+	Foreground bool
 }
 
 // NotificationSender describes an incoming direct message's sender.
