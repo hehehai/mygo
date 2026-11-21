@@ -67,6 +67,11 @@ type window struct {
 	// NSVisualEffectView, or an NSGlassEffectView when glass is.
 	effect id
 	glass  bool
+	// vstyle shapes the effect view (SetVibrancyStyle); framed tells that
+	// it shows at a Frame of the content's, which the content's frames
+	// then present with (surface.PresentsWithWindow).
+	vstyle platform.VibrancyStyle
+	framed bool
 	// keepActive is SetActiveAppearance's.
 	keepActive bool
 	// tint is the material's tint, which only NSGlassEffectView takes.
@@ -1452,6 +1457,7 @@ func (w *window) SetVibrancy(material string) {
 			if glass {
 				w.clearForGlass()
 			}
+			w.styleEffect()
 		}
 		if glass {
 			send(w.effect, "setStyle:", g.style)
@@ -1522,9 +1528,130 @@ func (w *window) removeEffect() {
 	if w.effect != 0 {
 		send(w.effect, "removeFromSuperview")
 		release(w.effect)
-		w.effect, w.glass = 0, false
+		w.effect, w.glass, w.framed = 0, false, false
 		w.restoreBacking()
 	}
+}
+
+// SetVibrancyStyle shapes the material (platform.VibrancyStyler); the
+// style holds for a material set later too.
+func (w *window) SetVibrancyStyle(s platform.VibrancyStyle) {
+	w.vstyle = s
+	withPool(w.styleEffect)
+}
+
+// styleEffect fits the effect view to vstyle, without Core Animation's
+// implicit animations: hidden, or its frame (a Frame of the content's,
+// from its top left, kept at its top as the window resizes; or the
+// content view's bounds, which it follows) inset by the style's insets,
+// its corners rounded by a mask image (a CALayer's corners do not clip a
+// behind-window blur everywhere), its alpha and its appearance. A Frame
+// shown has the content's frames present with Core Animation's
+// transaction (framed, surface.PresentsWithWindow), which commits these
+// changes too: a frame presented as soon as drawn showed a refresh before
+// or after the material moved, and a shape springing over it let it show
+// around its edge. The zero style is no style: the material fills the
+// window, as roundEffect rounds it.
+func (w *window) styleEffect() {
+	w.framed = false
+	if w.effect == 0 {
+		return
+	}
+	s := w.vstyle
+	tx := class("CATransaction")
+	send(tx, "begin")
+	send(tx, "setDisableActions:", 1)
+	defer send(tx, "commit")
+	if s.Hidden || s.Fade >= 1 {
+		send(w.effect, "setHidden:", 1)
+		return
+	}
+	b := msgRect(w.view, sel("bounds"))
+	f := b
+	mask := uintptr(nsViewWidthHeightSizable)
+	if r := s.Frame; r.Width > 0 && r.Height > 0 {
+		// The content view is not flipped.
+		f = NSRect{
+			Origin: NSPoint{X: float64(r.X), Y: b.Size.Height - float64(r.Y) - float64(r.Height)},
+			Size:   NSSize{Width: float64(r.Width), Height: float64(r.Height)},
+		}
+		mask = nsViewMinYMargin
+		w.framed = true
+	}
+	// Bottom is the origin's side.
+	f.Origin.X += s.Left
+	f.Origin.Y += s.Bottom
+	f.Size.Width = max(f.Size.Width-s.Left-s.Right, 0)
+	f.Size.Height = max(f.Size.Height-s.Top-s.Bottom, 0)
+	send(w.effect, "setAutoresizingMask:", mask)
+	msgSetRect(w.effect, sel("setFrame:"), f)
+	switch {
+	case s == platform.VibrancyStyle{}:
+		if w.glass {
+			msgSetFloat(w.effect, sel("setCornerRadius:"), float64(max(w.radius, 0)))
+		} else {
+			send(w.effect, "setMaskImage:", 0)
+			send(w.effect, "setAppearance:", 0)
+		}
+		w.roundEffect()
+	case w.glass:
+		msgSetFloat(w.effect, sel("setCornerRadius:"), s.Radius)
+	default:
+		var img id
+		if s.Radius > 0 {
+			img = vibrancyMask(s.Radius, s.Corners)
+		}
+		send(w.effect, "setMaskImage:", uintptr(img))
+		var appearance id
+		if s.Dark {
+			appearance = send(class("NSAppearance"), "appearanceNamed:", uintptr(nsString("NSAppearanceNameDarkAqua")))
+		}
+		send(w.effect, "setAppearance:", uintptr(appearance))
+	}
+	msgSetFloat(w.effect, sel("setAlphaValue:"), 1-max(s.Fade, 0))
+	send(w.effect, "setHidden:", 0)
+}
+
+// Corners of platform.VibrancyStyle.Corners.
+const (
+	cornerTopLeft = 1 << iota
+	cornerTopRight
+	cornerBottomLeft
+	cornerBottomRight
+)
+
+// vibrancyMask is a mask image for NSVisualEffectView: a rectangle with
+// corners of radius r (those of corners, all four for 0) that stay as
+// they are while its middle stretches to the view's size (cap insets).
+// Autoreleased.
+func vibrancyMask(r float64, corners uint8) id {
+	size := 2*r + 1
+	img := autorelease(msgInitSize(send(class("NSImage"), "alloc"), sel("initWithSize:"), NSSize{Width: size, Height: size}))
+	send(img, "lockFocus")
+	send(send(class("NSColor"), "blackColor"), "set")
+	path := class("NSBezierPath")
+	send(msgRectRadii(path, sel("bezierPathWithRoundedRect:xRadius:yRadius:"), NSRect{Size: NSSize{Width: size, Height: size}}, r, r), "fill")
+	if corners != 0 {
+		// The corners left square: the image is not flipped.
+		for _, c := range []struct {
+			bit  uint8
+			x, y float64
+		}{
+			{cornerTopLeft, 0, size - r},
+			{cornerTopRight, size - r, size - r},
+			{cornerBottomLeft, 0, 0},
+			{cornerBottomRight, size - r, 0},
+		} {
+			if corners&c.bit == 0 {
+				send(msgInitRect(path, sel("bezierPathWithRect:"), NSRect{Origin: NSPoint{X: c.x, Y: c.y}, Size: NSSize{Width: r, Height: r}}), "fill")
+			}
+		}
+	}
+	send(img, "unlockFocus")
+	// NSEdgeInsets (top, left, bottom, right) has NSRect's layout.
+	msgSetRect(img, sel("setCapInsets:"), NSRect{Origin: NSPoint{X: r, Y: r}, Size: NSSize{Width: r, Height: r}})
+	send(img, "setResizingMode:", 1) // NSImageResizingModeStretch
+	return img
 }
 
 // clearForGlass makes a window that is not transparent clear while it

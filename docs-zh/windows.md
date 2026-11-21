@@ -175,6 +175,7 @@ win.Focus()             // Blur, IsFocused
 其他属性：
 
 - `SetTitle`、`SetResizable`、`SetMovable`、`SetMinimizable`、`SetMaximizable`、`SetClosable`、`SetMinimumSize`、`SetMaximumSize`、`SetAlwaysOnTop`、`SetOpacity`、`SetHasShadow`、`SetBackgroundColor` 和 `SetVibrancy` 更改选项所设置的内容。在 Windows 上，`SetVibrancy` 更改用材质创建的窗口的材质，在其他窗口中则不显示任何材质。在 Linux 上，窗口保留创建时的阴影（`DisableShadow`）。
+- `SetVibrancyStyle` 在 macOS 上给材质定形状，用于自己绘制形状的透明窗口：从边缘内缩（给阴影留出空间的圆角浮窗），或者放在内容的某个 `Frame` 上，由应用随形状的弹动移动它（刘海下的架子；这时内容的帧和材质的移动一起呈现）；可以圆角、淡化、隐藏，或不论应用的外观都显示为深色。
 - `SetIcon(png)` 给窗口自己的图标，显示在标题栏和任务栏按钮中（Linux、Windows）。
 - `SetSkipTaskbar` 让窗口不出现在任务栏中（Linux、Windows）。
 - `SetAutoHideMenuBar` 隐藏菜单栏，直到按 Alt 或 F10，或永久重新显示它（Linux、Windows）。

@@ -1326,6 +1326,27 @@ type Screen interface {
 	CursorPoint() Point
 }
 
+// VibrancyStyle shapes a window's material (mygo.VibrancyStyle): Frame,
+// in the content's points from its top left (zero: the whole content),
+// inset by Top, Right, Bottom and Left; its Corners (bits: top left, top
+// right, bottom left, bottom right; 0 all) rounded by Radius; faded by
+// Fade (0 to 1), hidden by Hidden; Dark shows it in the dark appearance.
+type VibrancyStyle struct {
+	Top, Right, Bottom, Left float64
+	Frame                    Rect
+	Radius                   float64
+	Corners                  uint8
+	Fade                     float64
+	Hidden                   bool
+	Dark                     bool
+}
+
+// VibrancyStyler is a Window whose material (SetVibrancy) can be shaped.
+// Only macOS has it.
+type VibrancyStyler interface {
+	SetVibrancyStyle(s VibrancyStyle)
+}
+
 // PointerWatcher is a Screen that tells where the pointer is while it
 // moves in any app (macOS).
 type PointerWatcher interface {

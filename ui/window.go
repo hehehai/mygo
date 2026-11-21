@@ -423,6 +423,27 @@ type gpuRenderer interface {
 // Invalidate has the next frame draw whole.
 type invalidator interface{ Invalidate() }
 
+// syncRenderer is a GPU renderer that can present frames with the
+// window's other changes (Metal's, with Core Animation's transaction).
+type syncRenderer interface {
+	// SetWithWindow has the frames drawn from now on present with the
+	// window's changes, or as soon as drawn where nothing else needs them
+	// to.
+	SetWithWindow(on bool)
+}
+
+// withWindow tells the GPU renderer g whether the surface wants its
+// frames to show with its window's other changes
+// (platform.WindowSyncedSurface).
+func (h *windowHost) withWindow(g gpuRenderer) {
+	r, ok := g.(syncRenderer)
+	if !ok {
+		return
+	}
+	s, ok := h.conn.Surface.(platform.WindowSyncedSurface)
+	r.SetWithWindow(ok && s.PresentsWithWindow())
+}
+
 // wideRenderer is a GPU renderer that can draw the colors of scenes outside
 // the sRGB gamut (Metal's).
 type wideRenderer interface {
@@ -607,6 +628,7 @@ func (h *windowHost) screenWide() bool {
 func (h *windowHost) render(s *scene.Scene) bool {
 	for try := 0; h.gpu != nil; try++ {
 		g := h.gpu
+		h.withWindow(g)
 		err := g.Render(s)
 		if err == nil {
 			return true

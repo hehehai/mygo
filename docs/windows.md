@@ -275,6 +275,12 @@ Other properties:
   changes the material of a window created with one, and shows none in
   other windows. On Linux, a window keeps the shadow it was created with
   (`DisableShadow`).
+- `SetVibrancyStyle` shapes the material on macOS, for a transparent
+  window that draws a shape of its own: inset from the edges (a rounded
+  HUD with room for its shadow), or at a `Frame` of the content that the
+  app moves as its shape springs (a notch's shelf; the content's frames
+  then present with the material's moves), its corners rounded, faded,
+  hidden, or dark whatever the app's appearance.
 - `SetIcon(png)` gives the window its own icon in its title bar and taskbar
   button (Linux, Windows).
 - `SetSkipTaskbar` hides the window from the taskbar (Linux, Windows).

@@ -628,6 +628,8 @@ type Window struct {
 	// InputRegion is what SetInputRegion set last: nil for all of the
 	// window.
 	InputRegion []platform.Rect
+	// VibrancyStyle is what SetVibrancyStyle set last.
+	VibrancyStyle platform.VibrancyStyle
 	// AsyncFunction answers CallAsyncFunction.
 	AsyncFunction func(body string) (string, error)
 	// AsyncCallback, when set, receives CallAsyncFunction calls to answer
@@ -824,6 +826,12 @@ func (w *Window) SetActiveAppearance(v bool)      { w.mu.Lock(); w.active = v; w
 func (w *Window) SetWindowButtonsTheme(string) {}
 
 func (w *Window) SetInputRegion(r []platform.Rect) { w.mu.Lock(); w.InputRegion = r; w.mu.Unlock() }
+
+func (w *Window) SetVibrancyStyle(s platform.VibrancyStyle) {
+	w.mu.Lock()
+	w.VibrancyStyle = s
+	w.mu.Unlock()
+}
 
 // ActiveAppearance reports what SetActiveAppearance set last.
 func (w *Window) ActiveAppearance() bool             { w.mu.Lock(); defer w.mu.Unlock(); return w.active }

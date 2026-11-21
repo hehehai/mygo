@@ -124,6 +124,18 @@ type GlassSurface interface {
 	PlaceGlass(places []GlassPlacement)
 }
 
+// WindowSyncedSurface is a Surface whose frames show with its window's
+// other changes while it says so: native views moving with the content,
+// as the material a window shows at a frame of the content's
+// (VibrancyStyle.Frame), which a frame presented on its own showed a
+// refresh before or after them.
+type WindowSyncedSurface interface {
+	// PresentsWithWindow reports whether the next frame should present
+	// with the window's changes made meanwhile (Core Animation's
+	// transaction on macOS), not as soon as drawn.
+	PresentsWithWindow() bool
+}
+
 // MaterialSurface is a Surface whose window can show a material
 // (vibrancy) behind the content, wherever its frames are transparent.
 type MaterialSurface interface {

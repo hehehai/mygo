@@ -1496,6 +1496,63 @@ func (w *Window) SetVibrancy(v Vibrancy) {
 	w.Invalidate()
 }
 
+// VibrancyCorners picks the corners of a VibrancyStyle that its Radius
+// rounds; none picked rounds all four.
+type VibrancyCorners uint8
+
+const (
+	VibrancyTopLeft VibrancyCorners = 1 << iota
+	VibrancyTopRight
+	VibrancyBottomLeft
+	VibrancyBottomRight
+)
+
+// VibrancyStyle shapes a window's material (WindowOptions.Vibrancy,
+// SetVibrancy) on macOS, for a transparent window that draws a shape of
+// its own and wants the blur behind the shape only. The zero value fills
+// the window, as without a style.
+type VibrancyStyle struct {
+	// Top, Right, Bottom and Left inset the material, in DIPs, from the
+	// edges of Frame: a rounded HUD with room for its own shadow around it
+	// insets it by that room.
+	Top, Right, Bottom, Left float64
+	// Frame places the material in the window's content, in DIPs from its
+	// top left corner, where it stays as the window resizes: a shape that
+	// springs between sizes in a fixed window (a notch's shelf) gives its
+	// frame as it changes, and the content's frames present with the
+	// material's moves then, so that the two show together. The zero
+	// Rectangle is the whole content, which the material follows as the
+	// window resizes.
+	Frame Rectangle
+	// Radius rounds the material's Corners, all four if none.
+	Radius  float64
+	Corners VibrancyCorners
+	// Fade fades the material, from 0 (all of it) to 1 (none). A material
+	// faded lets what is behind the window show through it sharp, rather
+	// than blurring it less.
+	Fade float64
+	// Hidden hides the material, until a style that does not.
+	Hidden bool
+	// Dark shows the material as in the dark appearance whatever the
+	// app's, for a HUD that stays dark over anything.
+	Dark bool
+}
+
+// SetVibrancyStyle shapes the window's material (see VibrancyStyle); it
+// holds for a material set later too. macOS; elsewhere it does nothing.
+func (w *Window) SetVibrancyStyle(s VibrancyStyle) {
+	ps := platform.VibrancyStyle{
+		Top: s.Top, Right: s.Right, Bottom: s.Bottom, Left: s.Left,
+		Frame:  platform.Rect{X: s.Frame.X, Y: s.Frame.Y, Width: s.Frame.Width, Height: s.Frame.Height},
+		Radius: s.Radius, Corners: uint8(s.Corners), Fade: s.Fade, Hidden: s.Hidden, Dark: s.Dark,
+	}
+	w.do(func(n platform.Window) {
+		if v, ok := n.(platform.VibrancyStyler); ok {
+			v.SetVibrancyStyle(ps)
+		}
+	})
+}
+
 // SetVibrancyTint tints the window's material, in the syntax of
 // BackgroundColor, or "" to remove the tint. Only macOS 26's Liquid Glass
 // takes one; other materials and platforms ignore it. See

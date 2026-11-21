@@ -380,6 +380,11 @@ func (s *surface) Native() platform.SurfaceNative {
 
 // ShowsMaterial reports whether the window has a material, whose effect
 // view, behind the surface, shows where its frames are transparent.
+// PresentsWithWindow reports whether the window shows its material at a
+// frame of the content's (platform.WindowSyncedSurface,
+// window.SetVibrancyStyle).
+func (s *surface) PresentsWithWindow() bool { return s.w != nil && s.w.framed }
+
 func (s *surface) ShowsMaterial() bool { return s.w.effect != 0 || s.w.popover != 0 }
 
 func (s *surface) scale() float64 {
