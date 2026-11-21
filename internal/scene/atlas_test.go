@@ -1,7 +1,10 @@
 package scene
 
 import (
+	"bytes"
 	"image"
+	"math/rand/v2"
+	"slices"
 	"testing"
 )
 
@@ -120,5 +123,48 @@ func TestAtlasRepackAndGrow(t *testing.T) {
 	check("grown", pos)
 	if _, _, ok := a.Alloc(40, 40); !ok {
 		t.Error("no room after growing")
+	}
+}
+
+// TestAtlasRepackOrder: where Repack puts a rectangle does not depend on
+// the order it is given them in, which comes from maps (the text system's
+// caches): text drawn scaled from the atlas would round otherwise.
+func TestAtlasRepackOrder(t *testing.T) {
+	var place []image.Point
+	for run := range 20 {
+		a := NewAtlas(1, 64, 64)
+		var rects []image.Rectangle
+		for i := range 12 {
+			w, h := 5+i%2, 6+i%3 // many of one size
+			x, y, ok := a.Alloc(w, h)
+			if !ok {
+				t.Fatal("full")
+			}
+			a.Put(x, y, w, h, bytes.Repeat([]byte{byte(i + 1)}, w*h), w)
+			rects = append(rects, image.Rect(x, y, x+w, y+h))
+		}
+		order := rand.New(rand.NewPCG(uint64(run), 1)).Perm(len(rects))
+		shuffled := make([]image.Rectangle, len(rects))
+		for i, j := range order {
+			shuffled[i] = rects[j]
+		}
+		pos, ok := a.Repack(shuffled)
+		if !ok {
+			t.Fatal("Repack: no room")
+		}
+		got := make([]image.Point, len(rects))
+		for i, j := range order {
+			got[j] = pos[i]
+		}
+		if place == nil {
+			place = got
+		} else if !slices.Equal(got, place) {
+			t.Fatalf("run %d: rectangles went to %v, in another order to %v", run, got, place)
+		}
+		for j, p := range got {
+			if v := a.Pix[p.Y*a.W+p.X]; v != byte(j+1) {
+				t.Errorf("run %d: rectangle %d holds %d", run, j, v)
+			}
+		}
 	}
 }
