@@ -26,14 +26,18 @@ const (
 	styleFullSizeContentView = 1 << 15
 	styleNonactivatingPanel  = 1 << 7
 
-	nsBackingStoreBuffered   = 2
-	nsFloatingWindowLevel    = 3
-	nsPopUpMenuWindowLevel   = 101
+	nsBackingStoreBuffered = 2
+	nsFloatingWindowLevel  = 3
+	nsPopUpMenuWindowLevel = 101
+	// nsOverMenuBarWindowLevel is NSMainMenuWindowLevel + 3: above the menu
+	// bar (24) and its status items (25), below the menus (101).
+	nsOverMenuBarWindowLevel = 27
 	nsNormalWindowLevel      = 0
 	nsViewWidthHeightSizable = 2 | 16
 
 	collectionCanJoinAllSpaces    = 1 << 0
 	collectionTransient           = 1 << 3
+	collectionStationary          = 1 << 4
 	collectionIgnoresCycle        = 1 << 6
 	collectionFullScreenPrimary   = 1 << 7
 	collectionFullScreenAuxiliary = 1 << 8
@@ -223,6 +227,11 @@ func (w *window) create() {
 		// the style it is created with.
 		cls = "MyGoPanel"
 		style |= styleNonactivatingPanel
+		if o.OverMenuBar {
+			// Borderless: AppKit keeps a titled window's frame below the
+			// menu bar (constrainFrameRect:toScreen:).
+			style = styleNonactivatingPanel
+		}
 	}
 	w.win = msgInitWindow(send(class(cls), "alloc"), sel("initWithContentRect:styleMask:backing:defer:"),
 		content, style, nsBackingStoreBuffered, false)
@@ -265,6 +274,10 @@ func (w *window) create() {
 		// On the Space the user is on, full-screen ones included, as they
 		// switch, and out of Mission Control and the window cycle.
 		behavior = collectionCanJoinAllSpaces | collectionFullScreenAuxiliary | collectionIgnoresCycle | collectionTransient
+		if o.OverMenuBar {
+			// Where it is on every Space, without sliding as they switch.
+			behavior = behavior&^collectionTransient | collectionStationary
+		}
 		// A panel stays as the app is deactivated: the app hides it.
 		send(w.win, "setHidesOnDeactivate:", 0)
 		if o.KeyboardOnlyForText || !o.Focusable {

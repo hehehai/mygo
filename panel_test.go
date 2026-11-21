@@ -66,3 +66,16 @@ func TestPanelKeyboard(t *testing.T) {
 		}
 	}
 }
+
+// TestPanelOverMenuBar passes OverMenuBar to the backend of a panel, and
+// of no other window.
+func TestPanelOverMenuBar(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Panel: true, OverMenuBar: true})
+	if !fw.Opts.OverMenuBar {
+		t.Error("a panel lost OverMenuBar")
+	}
+	_, fw = testWindow(t, WindowOptions{OverMenuBar: true})
+	if fw.Opts.OverMenuBar {
+		t.Error("a window that is no panel took OverMenuBar")
+	}
+}

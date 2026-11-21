@@ -245,6 +245,9 @@ func (w *window) applyLevel() {
 	level := nsNormalWindowLevel
 	if w.onTop {
 		level = nsFloatingWindowLevel
+		if w.opts.Panel && w.opts.OverMenuBar {
+			level = nsOverMenuBarWindowLevel
+		}
 	}
 	if w.isChild() || w.modalToFlyout() && !w.parent.closed && w.parent.win != 0 {
 		level = max(level, sendInt(w.parent.win, "level"))

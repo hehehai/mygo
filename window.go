@@ -238,6 +238,13 @@ type WindowOptions struct {
 	// input of its native UI is pressed (PanelKeyboardForText), or never
 	// (PanelKeyboardNever). It changes nothing without Panel.
 	PanelKeyboard PanelKeyboard
+	// OverMenuBar lets a Panel go over the menu bar, as the shelves that
+	// unfold from the MacBook's notch (Display.Notch) do: on macOS it has
+	// no title bar (AppKit would keep a titled window below the menu bar),
+	// floats above the menu bar and its status items but below the menus
+	// they open, and stays put as the user switches Spaces. It changes
+	// nothing elsewhere or without Panel.
+	OverMenuBar bool
 
 	// Page configures the window's web page.
 	Page PageOptions
@@ -814,6 +821,7 @@ func (w *Window) platformOptions(o *WindowOptions) *platform.WindowOptions {
 	if o.Panel {
 		p.Minimizable, p.Maximizable, p.Fullscreenable = false, false, false
 		p.AlwaysOnTop, p.SkipTaskbar = true, true
+		p.OverMenuBar = o.OverMenuBar
 		switch o.PanelKeyboard {
 		case PanelKeyboardForText:
 			p.KeyboardOnlyForText = true

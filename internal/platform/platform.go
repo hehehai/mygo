@@ -468,6 +468,9 @@ type WindowOptions struct {
 	// (KeyboardTaker; mygo.PanelKeyboardForText). A Panel that never takes
 	// the keyboard (mygo.PanelKeyboardNever) is one that is not Focusable.
 	KeyboardOnlyForText bool
+	// OverMenuBar lets a Panel go over the menu bar
+	// (mygo.WindowOptions.OverMenuBar).
+	OverMenuBar bool
 
 	// UserScripts are injected into every page, in order.
 	UserScripts []UserScript
