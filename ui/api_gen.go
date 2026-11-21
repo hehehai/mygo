@@ -2393,6 +2393,21 @@ func Sidebar(c *Context, selected *string, fn func()) Element {
 	return wrapElement(_e)
 }
 
+// SidebarEntry adds an item to a Sidebar without building it: an item of
+// a long section out of view, which the app builds only near what the
+// sidebar shows, as a List builds its rows, leaving the room the items
+// would take. Up, Down, Home, End and typing the first letters of label
+// choose it as they choose the items built, in the order they come;
+// build the item chosen (SidebarItem), which the view may scroll to.
+// Outside a Sidebar it does nothing.
+func SidebarEntry(c *Context, id string, label string) {
+	_ctx := c.build()
+	if _ctx == nil {
+		return
+	}
+	coreSidebarEntry(_ctx, id, label)
+}
+
 // SidebarItem creates an item of a Sidebar choosing id, showing label
 // after icon, nil for none. Add to it with Children, as a Badge.
 func SidebarItem(c *Context, id string, icon *SVG, label string) Element {

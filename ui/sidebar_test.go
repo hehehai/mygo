@@ -91,3 +91,46 @@ func TestSidebar(t *testing.T) {
 		t.Errorf("focusing Macintosh HD chose %q", place)
 	}
 }
+
+// Items out of view, added without being built (SidebarEntry), are
+// chosen by the keys and typing as the items built are, in their order.
+func TestSidebarEntry(t *testing.T) {
+	place := "a"
+	names := []string{"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
+	ids := []string{"a", "b", "g", "d", "e"}
+	built := map[string]bool{}
+	tt := coreNewTester(func(c *context) {
+		clear(built)
+		coreSidebar(c, &place, func() {
+			coreSidebarSection(c, "Places", nil, func() {
+				for i, id := range ids {
+					// Only the first item and the one chosen are built.
+					if i == 0 || id == place {
+						coreSidebarItem(c, id, nil, names[i])
+						built[id] = true
+					} else {
+						coreSidebarEntry(c, id, names[i])
+					}
+				}
+			})
+		}).Width(200)
+		coreSidebarEntry(c, "outside", "Outside") // not in a sidebar: nothing
+	}, 400, 300)
+	tt.Click("Alpha")
+	for _, step := range []struct {
+		key  Key
+		want string
+	}{{KeyDown, "b"}, {KeyDown, "g"}, {KeyUp, "b"}, {KeyEnd, "e"}, {KeyHome, "a"}} {
+		tt.Key(0, step.key)
+		if place != step.want || !built[place] {
+			t.Fatalf("%v chose %q (built %v)", step.key, place, built)
+		}
+	}
+	tt.Key(0, KeyD)
+	if place != "d" || !built["d"] || built["g"] {
+		t.Fatalf("d chose %q (built %v)", place, built)
+	}
+	if tt.HasText("Gamma") || !tt.HasText("Delta") {
+		t.Fatalf("texts %q", tt.Texts())
+	}
+}

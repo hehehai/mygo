@@ -216,6 +216,19 @@ func coreSidebarItem(c *context, id string, icon *SVG, label string) *node {
 	return item
 }
 
+// SidebarEntry adds an item to a Sidebar without building it: an item of
+// a long section out of view, which the app builds only near what the
+// sidebar shows, as a List builds its rows, leaving the room the items
+// would take. Up, Down, Home, End and typing the first letters of label
+// choose it as they choose the items built, in the order they come;
+// build the item chosen (SidebarItem), which the view may scroll to.
+// Outside a Sidebar it does nothing.
+func coreSidebarEntry(c *context, id, label string) {
+	if sb := c.sidebar; sb != nil {
+		sb.items = append(sb.items, sidebarEntry{id, label})
+	}
+}
+
 // Badge creates a short text in a pill, as a count of unread messages
 // beside a sidebar's item.
 func coreBadge(c *context, text string) *node {
