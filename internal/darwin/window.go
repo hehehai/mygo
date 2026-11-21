@@ -191,6 +191,12 @@ type window struct {
 	pdf    pdffit.Fit
 	// noPDFHUD hides WebKit's controls over a PDF (webview_pdfhud.go).
 	noPDFHUD bool
+	// underlay is a picture under a web view's page, across underRect;
+	// paneAt is where its pane was last placed, paneSize the size of the
+	// pane's bounds (webview_underlay.go).
+	underlay          id
+	underRect, paneAt platform.RectF
+	paneSize          NSSize
 }
 
 func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler) (platform.Window, error) {
@@ -2401,6 +2407,7 @@ func registerWindowClasses() {
 	})
 
 	registerClipViewClass()
+	registerUnderlayViewClass() // webview_underlay.go
 	classDef("MyGoWebView", "WKWebView", nil, append(append(webViewMethods(), contextMenuMethods()...), []objc.MethodDef{
 		method("mouseDown:", func(self id, cmd objc.SEL, ev id) {
 			if w := theBackend.byWebView[self]; w != nil {

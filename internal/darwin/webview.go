@@ -135,6 +135,8 @@ func (s *surface) PlaceWebViews(views []platform.WebViewPlacement) {
 			msgSetSize(v.pane, sel("setBoundsSize:"), NSSize{pw, ph})
 			msgSetRect(v.web, sel("setFrame:"), NSRect{Size: NSSize{pw, ph}})
 			v.roundPane(p.Radii, pw, ph)
+			v.paneAt, v.paneSize = f, NSSize{pw, ph}
+			v.placeUnderlay() // webview_underlay.go
 			// The placement's opacity fades the page itself, over what is
 			// behind the window too, as a flyout over a parent left live.
 			// The layer's own opacity is a 32-bit float, which a double's
@@ -448,6 +450,7 @@ func (w *window) closeWebView() {
 		send(w.web, "stopLoading")
 		send(w.web, "setNavigationDelegate:", 0)
 		send(w.web, "setUIDelegate:", 0)
+		w.dropUnderlay() // webview_underlay.go
 		send(w.clip, "removeFromSuperview")
 		delete(b.byDelegate, w.delegate)
 		delete(b.byWebView, w.web)

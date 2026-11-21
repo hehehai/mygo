@@ -3,7 +3,12 @@ package mygo
 import (
 	"errors"
 	"fmt"
+	"image"
+	"image/draw"
 	"log"
+	"reflect"
+	"sync"
+	"time"
 
 	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/internal/surface"
@@ -28,7 +33,13 @@ import (
 // what the view paints after it, as popovers and menus, while the view
 // builds it; it keeps its page while it does not show, until Destroy or
 // until its window closes. Its methods are safe from any goroutine.
-type WebView struct{ w *Window }
+type WebView struct {
+	w *Window
+	// under is the underlay last set (SetUnderlay), underRect where.
+	underMu   sync.Mutex
+	under     WebViewUnderlay
+	underRect platform.RectF
+}
 
 // WebViewOptions configure Window.NewWebView.
 type WebViewOptions struct {
@@ -111,7 +122,7 @@ func (w *Window) newWebView(opts WebViewOptions, bg *background) (*WebView, erro
 	}
 	pw.native = &webViewNative{Window: w.native, web: nv}
 	startContentRules(nv, opts.Page.ContentRules)
-	v := &WebView{pw}
+	v := &WebView{w: pw}
 	pw.webView = v
 
 	windows.Lock()
@@ -224,6 +235,79 @@ func (v *WebView) SetPDFControls(on bool) {
 			}
 		}
 	})
+}
+
+// WebViewUnderlay is a picture under a web view's page
+// (WebView.SetUnderlay).
+type WebViewUnderlay struct {
+	// Image is the picture (nil: none).
+	Image image.Image
+	// X, Y, Width, Height is where it is stretched across: a rectangle of
+	// the window's content in DIPs, as package ui lays it out (the whole
+	// window, say); it shows only where the web view does.
+	X, Y, Width, Height float64
+	// Fade is how long a new picture fades in over the one before (0: at
+	// once).
+	Fade time.Duration
+}
+
+// SetUnderlay shows u's picture under the web view's page, where the page
+// paints nothing: with its background transparent (SetBackgroundColor
+// "transparent", a page whose own is transparent), what the window's view
+// paints around the web view (a picture across the window) goes on under
+// the page, past its ends as it is pulled (the rubber band) too. A
+// picture the same as the last (its Image the same value) only moves.
+// macOS; elsewhere it does nothing.
+func (v *WebView) SetUnderlay(u WebViewUnderlay) {
+	r := platform.RectF{X: u.X, Y: u.Y, W: u.Width, H: u.Height}
+	v.underMu.Lock()
+	kept := sameImage(u.Image, v.under.Image)
+	same := kept && (u.Image == nil || r == v.underRect)
+	moved := kept && u.Image != nil && r != v.underRect
+	v.under, v.underRect = u, r
+	v.underMu.Unlock()
+	if same {
+		return
+	}
+	var pix []byte
+	var stride, w, h int
+	if u.Image != nil && !moved {
+		b := u.Image.Bounds()
+		m, ok := u.Image.(*image.RGBA)
+		if !ok || m.Rect.Min != (image.Point{}) {
+			m = image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+			draw.Draw(m, m.Rect, u.Image, b.Min, draw.Src)
+		}
+		pix, stride, w, h = m.Pix, m.Stride, b.Dx(), b.Dy()
+	}
+	onMain(func() {
+		n, ok := v.w.native.(*webViewNative)
+		if !ok {
+			return
+		}
+		s, ok := n.web.(interface {
+			SetUnderlay(pix []byte, stride, width, height int, r platform.RectF, fade float64)
+			SetUnderlayRect(r platform.RectF)
+		})
+		if !ok {
+			return
+		}
+		if moved {
+			s.SetUnderlayRect(r)
+			return
+		}
+		s.SetUnderlay(pix, stride, w, h, r, u.Fade.Seconds())
+	})
+}
+
+// sameImage reports whether a and b are the same picture: both none, or
+// the same value of a comparable type (a pointer).
+func sameImage(a, b image.Image) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	return ta == tb && ta.Comparable() && a == b
 }
 
 // SetBackgroundColor sets the color filling the web view until its page
