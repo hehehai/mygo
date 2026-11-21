@@ -39,6 +39,7 @@ type headless struct {
 	// clipboardData is what WriteClipboardData copied, with its formats.
 	clipboardData transfer.Data
 	cursor        Cursor
+	cursorImg     *ImageCursor
 	ime           platform.TextInputState
 	opened        []string
 	// escapes counts the Escapes nothing handled.
@@ -144,7 +145,8 @@ func (h *headless) afterTimer(at time.Time) {
 func (h *headless) framePath() string                          { return "drawn in memory" }
 func (h *headless) requestFrame()                              { h.requested.Store(true) }
 func (h *headless) repaintTimer(at time.Time)                  { h.repaintAt = at }
-func (h *headless) setCursor(c Cursor)                         { h.cursor = c }
+func (h *headless) setCursor(c Cursor)                         { h.cursor, h.cursorImg = c, nil }
+func (h *headless) setCursorImage(c *ImageCursor)              { h.cursor, h.cursorImg = cursorImage, c }
 func (h *headless) setTextInput(t platform.TextInputState)     { h.ime = t }
 func (h *headless) takeKeyboard()                              { h.keyboardTakes++ }
 func (h *headless) updateAccessibility(t *platform.AccessTree) { h.keepAccess(t) }
@@ -862,6 +864,51 @@ func (t *Tester) Menu() []string {
 	return out
 }
 
+// MenuEntry is an item of the context menu shown (Tester.MenuTree).
+type MenuEntry struct {
+	Label string
+	// Separator marks a line between groups (no label).
+	Separator bool
+	// Symbol is the system symbol of the item's icon (an icon of
+	// mygo.NewMenuIconSymbol), Image the PNG image of another icon, and
+	// Template whether the icon takes the color of the menu's text.
+	Symbol   string
+	Image    []byte
+	Template bool
+	// Shortcut is the key shown by the item, as "CmdOrCtrl+Shift+J".
+	Shortcut         string
+	Enabled, Checked bool
+	// Submenu is what the item opens, nil for an item without one.
+	Submenu []MenuEntry
+}
+
+// MenuTree returns the context menu shown, with its submenus, icons,
+// shortcuts and states, or nil when none is: the system's, or one drawn in
+// the window, as Menu.
+func (t *Tester) MenuTree() []MenuEntry {
+	m, _ := t.currentMenu()
+	if m == nil {
+		return nil
+	}
+	return menuEntries(m)
+}
+
+func menuEntries(m *platform.Menu) []MenuEntry {
+	out := []MenuEntry{}
+	for _, it := range m.Items {
+		e := MenuEntry{Label: it.Label, Separator: it.Type == platform.MenuItemSeparator,
+			Shortcut: it.Accelerator, Enabled: it.Enabled, Checked: it.Checked}
+		if ic := it.Icon; ic != nil {
+			e.Symbol, e.Image, e.Template = ic.Symbol, ic.PNG, ic.Template
+		}
+		if it.Submenu != nil {
+			e.Submenu = menuEntries(it.Submenu)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 // ChooseMenuItem chooses the item of the context menu shown labeled with
 // the last of path, in the submenus the others label, and closes the menu.
 func (t *Tester) ChooseMenuItem(path ...string) error {
@@ -1403,6 +1450,10 @@ func (t *Tester) SetClipboardData(d transfer.Data) {
 
 // Cursor returns the pointer shape the view shows.
 func (t *Tester) Cursor() Cursor { return t.h.cursor }
+
+// CursorImage returns the picture shown as the pointer
+// (Element.CursorImage), nil while a shape is (Cursor).
+func (t *Tester) CursorImage() *ImageCursor { return t.h.cursorImg }
 
 // OpenedURLs returns the links the view opened.
 func (t *Tester) OpenedURLs() []string { return t.h.opened }

@@ -154,6 +154,34 @@ mygo.NewNotification(mygo.NotificationOptions{
 }).Show()
 ```
 
+`Passive` puts a notification in Notification Center without a banner or
+a sound, also while the app is in front (macOS 12 and later), for what
+the user need not see at once, as a message sent. `App.NotificationStatus`
+tells, without asking the user, whether the app's notifications are
+allowed and how they show (none, banner, alert), so its settings can say
+so and offer System Settings; a platform that cannot tell answers a status
+that is not `Known`.
+
+### Buttons on macOS
+
+`RegisterNotificationCategory` declares a kind of notification and its
+buttons, and `Category` names it; a button pressed reaches the
+notification's `OnAction` and `App.OnNotificationAction`, with the text
+typed for an `Input` one (a reply). Other platforms show no buttons:
+
+```go
+mygo.RegisterNotificationCategory("mail", []mygo.NotificationAction{
+	{ID: "archive", Title: "Archive"},
+	{ID: "reply", Title: "Reply", Input: true, InputButton: "Send"},
+})
+mygo.App.OnNotificationAction(func(id, action, text string) {
+	if action == "reply" {
+		sendReply(id, text)
+	}
+})
+mygo.NewNotification(mygo.NotificationOptions{ID: msg.ID, Title: "Ada", Body: msg.Text, Category: "mail"}).Show()
+```
+
 ### Sender avatars on macOS
 
 An incoming direct message can supply a sender to display a prominent
@@ -305,6 +333,19 @@ Each app has the `Name` the system shows, in the user's language, an
 goroutine, and returns in tens of milliseconds. Drawing icons takes a few
 milliseconds each, on the main thread: draw those that show, and keep
 them.
+
+### A guard for scripted checks
+
+`mygo.SetSystemGuard(fn)` has `fn` asked before MyGo changes anything
+outside the app: opening a URL (`Shell.OpenExternal`, a link in native UI),
+a file (`OpenPath`) or an app (`LaunchApp`), revealing (`ShowItemInFolder`)
+or trashing a file (`TrashItem`, `TrashItemResult`), showing a notification,
+and writing or clearing the clipboard (`Clipboard`'s writes, a text input's
+Copy and Cut). `fn` gets the action (`mygo.GuardOpenURL`…) and its target;
+false skips it, and calls that return an error return `mygo.ErrGuarded`.
+Checks that run the real app on a developer's Mac set it so the user's
+other apps, notifications and clipboard stay out of their way; nil, the
+default, allows everything.
 
 ## Displays
 

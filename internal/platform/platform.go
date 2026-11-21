@@ -243,6 +243,12 @@ type AppHandler interface {
 	// for apps has for one, as it writes them, "" when it bound none.
 	HotkeyBound(id int, keys string)
 	NotificationClicked(id string)
+	// NotificationAction reports a notification's button pressed, with the
+	// text typed when it asks for some (NotificationAction.Input).
+	NotificationAction(id, action, text string)
+	// ContinueActivity reports an activity the system asks the app to
+	// continue: one of its Spotlight results opened, a Handoff.
+	ContinueActivity(a UserActivity)
 	// MediaCommand reports a media key or a remote command for what
 	// NowPlaying shows; position is where MediaSeek asks to go.
 	MediaCommand(cmd MediaCommand, position time.Duration)
@@ -1635,6 +1641,20 @@ type Tray interface {
 	Destroy()
 }
 
+// TrayDecorations is a Tray that draws over its icon in color, which a
+// template icon cannot have, and gives its native view (macOS).
+type TrayDecorations interface {
+	// SetOverlay draws png over the icon in its own colors, sized and
+	// placed as the icon; nil or empty removes it.
+	SetOverlay(png []byte) error
+	// SetDot shows a dot of c over the icon's top right corner, or removes
+	// it when on is false.
+	SetDot(c Color, on bool)
+	// Handle is the icon's native view (NSStatusBarButton* on macOS), 0
+	// once the icon is destroyed.
+	Handle() uintptr
+}
+
 // Notification is a desktop notification.
 type Notification struct {
 	ID       string
@@ -1642,6 +1662,9 @@ type Notification struct {
 	Subtitle string
 	Body     string
 	Silent   bool
+	// Passive goes into Notification Center without a banner or a sound
+	// (UNNotificationInterruptionLevelPassive on macOS 12 and later).
+	Passive bool
 	// Group gathers the notifications that share it (threadIdentifier on
 	// macOS).
 	Group string
@@ -1650,6 +1673,44 @@ type Notification struct {
 	// it gives one.
 	Image  []byte
 	Sender *NotificationSender
+	// Category names the notification's kind and Actions its buttons
+	// (UNNotificationCategory on macOS; the platforms without them ignore
+	// both).
+	Category string
+	Actions  []NotificationAction
+}
+
+// NotificationStatus is whether the user allows an app's notifications
+// (System Settings › Notifications) and how they show.
+type NotificationStatus struct {
+	// Known: the backend could tell (false: it cannot, the rest is zero).
+	Known bool
+	// Asked: the user has answered; Allowed: they may show (also when
+	// only quietly, provisionally); Denied: they may not.
+	Asked, Allowed, Denied bool
+	// Style is how they show: 0 none (in Notification Center only), 1 a
+	// banner that goes away, 2 an alert that stays.
+	Style int
+}
+
+// NotificationStatusReader is a backend that can read NotificationStatus;
+// done runs on the main thread.
+type NotificationStatusReader interface {
+	NotificationStatus(done func(NotificationStatus))
+}
+
+// NotificationAction is a button of a kind of notification.
+type NotificationAction struct {
+	ID    string
+	Title string
+	// Input asks for text (a reply): InputButton and Placeholder name the
+	// field's button and hint.
+	Input       bool
+	InputButton string
+	Placeholder string
+	Destructive bool
+	// Foreground brings the app to the front.
+	Foreground bool
 }
 
 // NotificationSender describes an incoming direct message's sender.
@@ -1787,4 +1848,15 @@ type NavigationFilter interface {
 // window off its stack (the back button, a swipe, Android's back).
 type NavigationHandler interface {
 	Popped()
+}
+
+// UserActivity is an activity the system asks the app to continue
+// (NSUserActivity on macOS).
+type UserActivity struct {
+	Type string
+	// UserInfo holds the activity's values that are strings or numbers
+	// (as text).
+	UserInfo   map[string]string
+	WebpageURL string
+	Title      string
 }

@@ -917,3 +917,18 @@ const (
 	CursorAllScroll
 	CursorNoDrop
 )
+
+// CursorImage is a pointer of a picture: Image's pixels, Scale of them a
+// point (2 for a picture made at twice its size), its hot spot HotX, HotY
+// points from its top left.
+type CursorImage struct {
+	Image      *image.RGBA
+	Scale      float64
+	HotX, HotY float64
+}
+
+// ImageCursorSurface is a Surface that shows pictures as the pointer
+// (macOS); SetCursor afterwards shows a shape again.
+type ImageCursorSurface interface {
+	SetCursorImage(c *CursorImage)
+}

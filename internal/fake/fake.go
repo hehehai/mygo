@@ -158,6 +158,8 @@ type Backend struct {
 	// NotificationError, when set, is what showing a notification fails
 	// with.
 	NotificationError error
+	// Status is what NotificationStatus reports (Known false: unset).
+	Status platform.NotificationStatus
 	// OnNotification, when set, handles delivery on the main thread, allowing
 	// tests to model an authorization answer that arrives asynchronously.
 	OnNotification func(*platform.Notification, func(error))
@@ -561,6 +563,16 @@ func (b *Backend) Notification(id string) *platform.Notification {
 // ClickNotification reports a click on a notification, as the platform
 // does. It runs on the main thread, like the backends report it.
 func (b *Backend) ClickNotification(id string) { b.h.NotificationClicked(id) }
+
+// PressNotificationAction reports a notification's button pressed, with
+// text typed, as the platform does (on the main thread).
+func (b *Backend) PressNotificationAction(id, action, text string) {
+	b.h.NotificationAction(id, action, text)
+}
+
+// ContinueActivity reports an activity to continue (a Spotlight result
+// opened, a Handoff), as the platform does (on the main thread).
+func (b *Backend) ContinueActivity(a platform.UserActivity) { b.h.ContinueActivity(a) }
 
 // Window is a fake native window. Scripts evaluated in it are recorded.
 type Window struct {
@@ -1619,6 +1631,49 @@ func (b *Backend) PreferenceReads() int {
 type tray struct {
 	b *Backend
 	h platform.TrayHandler
+	// overlay and dot are what SetOverlay and SetDot draw over the icon;
+	// gone is set once it is destroyed.
+	overlay []byte
+	dot     platform.Color
+	dotOn   bool
+	gone    bool
+}
+
+// TrayHandle is the native handle every fake tray reports until destroyed.
+const TrayHandle uintptr = 0x7ea7
+
+func (t *tray) SetOverlay(png []byte) error {
+	t.b.mu.Lock()
+	t.overlay = png
+	t.b.mu.Unlock()
+	return nil
+}
+
+func (t *tray) SetDot(c platform.Color, on bool) {
+	t.b.mu.Lock()
+	t.dot, t.dotOn = c, on
+	t.b.mu.Unlock()
+}
+
+func (t *tray) Handle() uintptr {
+	t.b.mu.Lock()
+	defer t.b.mu.Unlock()
+	if t.gone {
+		return 0
+	}
+	return TrayHandle
+}
+
+// TrayDecorations reports what the last tray made draws over its icon:
+// its overlay (nil for none) and its dot (ok false for none).
+func (b *Backend) TrayDecorations() (overlay []byte, dot platform.Color, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.trays) == 0 {
+		return nil, platform.Color{}, false
+	}
+	t := b.trays[len(b.trays)-1]
+	return t.overlay, t.dot, t.dotOn
 }
 
 func (t *tray) Dark() bool {
@@ -1651,6 +1706,7 @@ func (*tray) SetActivatable(bool)         {}
 func (*tray) Bounds() platform.Rect { return platform.Rect{X: 1300, Width: 30, Height: 25} }
 func (t *tray) Destroy() {
 	t.b.mu.Lock()
+	t.gone = true
 	t.b.trays = slices.DeleteFunc(t.b.trays, func(x *tray) bool { return x == t })
 	t.b.mu.Unlock()
 }
@@ -1913,4 +1969,12 @@ func (b *Backend) SetSecretError(err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.secretError = err
+}
+
+// NotificationStatus reports Status.
+func (b *Backend) NotificationStatus(done func(platform.NotificationStatus)) {
+	b.mu.Lock()
+	st := b.Status
+	b.mu.Unlock()
+	done(st)
 }

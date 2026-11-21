@@ -14,6 +14,7 @@ import (
 	"github.com/egoist/mygo/internal/raster"
 	"github.com/egoist/mygo/internal/scene"
 	"github.com/egoist/mygo/internal/surface"
+	"github.com/egoist/mygo/internal/sysguard"
 	"github.com/egoist/mygo/internal/text"
 	"github.com/egoist/mygo/transfer"
 )
@@ -885,6 +886,14 @@ func (h *windowHost) textSystem() *text.System { return text.Shared() }
 
 func (h *windowHost) setCursor(c Cursor) { h.conn.Surface.SetCursor(platform.Cursor(c)) }
 
+func (h *windowHost) setCursorImage(c *ImageCursor) {
+	if s, ok := h.conn.Surface.(platform.ImageCursorSurface); ok {
+		s.SetCursorImage(&c.c)
+		return
+	}
+	h.conn.Surface.SetCursor(platform.CursorDefault)
+}
+
 func (h *windowHost) setTextInput(t platform.TextInputState) { h.conn.Surface.SetTextInput(t) }
 
 // takeKeyboard gives the window the keyboard, after the event being
@@ -915,13 +924,17 @@ func (h *windowHost) clipboardFormats() []transfer.Format {
 }
 
 func (h *windowHost) writeClipboard(s string) {
-	if h.conn.Clipboard != nil {
+	if h.conn.Clipboard != nil && sysguard.Allows(sysguard.Clipboard, "") {
 		h.conn.Clipboard.WriteText(s)
 	}
 }
 
 func (h *windowHost) writeClipboardThen(s string, done func(error)) {
 	c := h.conn.Clipboard
+	if !sysguard.Allows(sysguard.Clipboard, "") {
+		h.post(func() { done(sysguard.ErrGuarded) })
+		return
+	}
 	if later, ok := c.(platform.LaterClipboard); ok {
 		later.WriteTextThen(s, done)
 		return
@@ -949,7 +962,7 @@ func (h *windowHost) readClipboardData(formats []transfer.Format) transfer.Data 
 }
 
 func (h *windowHost) writeClipboardData(d transfer.Data) {
-	if h.conn.Clipboard != nil {
+	if h.conn.Clipboard != nil && sysguard.Allows(sysguard.Clipboard, "") {
 		h.conn.Clipboard.WriteData(d, false, nil)
 	}
 }

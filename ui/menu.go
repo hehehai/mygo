@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/egoist/mygo/internal/l10n"
 	"github.com/egoist/mygo/internal/platform"
@@ -218,7 +219,30 @@ type MenuItem struct {
 	drawn, hi bool
 }
 
+// menuLabels is the function SetMenuLabels set, nil for none.
+var menuLabels atomic.Pointer[func(string) string]
+
+// SetMenuLabels makes every label of a view's menus — ContextMenu's,
+// Element.Menu's, PopoverMenu's, their submenus' and EditItems' — pass
+// through f before it shows, for an app whose menus drop what its buttons
+// say, as a trailing "…": the menu shows f(label), assistive technology
+// reads it, and Tester.Menu, MenuTree and ChooseMenuItem see it; Chosen
+// works as before. Separators, and the labels of the app's menu bar and a
+// tray's menu, built of mygo.MenuItem, are left alone. nil, the default,
+// shows labels as given. Set it before menus open; it holds for every
+// window.
+func SetMenuLabels(f func(string) string) {
+	if f == nil {
+		menuLabels.Store(nil)
+		return
+	}
+	menuLabels.Store(&f)
+}
+
 func (m *Menu) add(label string, typ platform.MenuItemType) *MenuItem {
+	if f := menuLabels.Load(); f != nil && typ != platform.MenuItemSeparator {
+		label = (*f)(label)
+	}
 	r := m.run
 	r.seq++
 	it := &MenuItem{run: r, seq: r.seq, label: label}
@@ -342,13 +366,15 @@ func (it *MenuItem) Radio(on bool) *MenuItem {
 }
 
 // MenuIcon is the image of a menu item, as mygo.NewMenuIcon makes it of a
-// PNG image, and mygo.NewMenuIconSVG of an SVG document.
+// PNG image, mygo.NewMenuIconScaled of one at its own size,
+// mygo.NewMenuIconSVG of an SVG document and mygo.NewMenuIconSymbol of a
+// system symbol.
 type MenuIcon interface {
 	PlatformMenuIcon() *platform.MenuIcon
 }
 
-// Icon shows an image beside the item's label, one mygo.NewMenuIcon or
-// mygo.NewMenuIconSVG made: make each once, not as the menu builds, and
+// Icon shows an image beside the item's label, one mygo.NewMenuIcon,
+// NewMenuIconScaled, NewMenuIconSVG or NewMenuIconSymbol made: make each once, not as the menu builds, and
 // give it to the items that show it. A template image takes the color of
 // the item's text, or its IconColor in the menus MyGo draws. nil shows
 // none. The system's menus show it as package mygo's items do (see
@@ -588,6 +614,9 @@ type menuState struct {
 	// pass builds it, as one asked for before the pass.
 	later          uint64
 	laterX, laterY float32
+	// laterContext is set when later is a context menu Handle.
+	// OpenContextMenu asked for, rather than a menu button's.
+	laterContext bool
 	// drawn is the menu drawn in the window that shows (PopoverMenu,
 	// PopoverMenuButton), nil while none does.
 	drawn *drawnMenu
@@ -784,8 +813,39 @@ func (rt *engine) menuKey() bool {
 // at (x, y), for the view asking for it after s was built.
 func (rt *engine) askMenuLater(s *state, x, y float32) {
 	mr := &rt.menu
-	mr.later, mr.laterX, mr.laterY = s.id, x, y
+	mr.later, mr.laterX, mr.laterY, mr.laterContext = s.id, x, y, false
 	rt.consumed = true
+}
+
+// OpenContextMenu opens the context menu of the control bound to the
+// handle in c's window at (x, y), in window DIPs, as a secondary click
+// there would: the control's ContextMenu (or PopoverMenu) function builds
+// it in the next frame, and again for the item chosen. For a menu asked
+// for by what the view cannot see as a click — a page in a web view that
+// tells the app which of its own elements was right-clicked — and for
+// menus opened from code. A control of no size, which nothing can click,
+// gives a menu only code opens. It reports false, and opens nothing, when
+// the control was not in the last frame, has no context menu or is
+// disabled. Asked for while the view builds, it opens once the pass ends.
+func (r Handle) OpenContextMenu(c *Context, x, y float32) bool {
+	rt := c.runtime()
+	b := (&r).binding(rt, false)
+	if b == nil || b.closed || b.id == 0 {
+		return false
+	}
+	s := rt.states[b.id]
+	if s == nil || s.flags&flagContextMenu == 0 || s.flags&flagDisabled != 0 {
+		return false
+	}
+	if rt.inFrame {
+		// The pass may have built the control already, and its end drops
+		// what no control built: asked for after it (endPass).
+		mr := &rt.menu
+		mr.later, mr.laterX, mr.laterY, mr.laterContext = s.id, x, y, true
+		return true
+	}
+	rt.askMenu(s, x, y, false)
+	return true
 }
 
 // openMenuButton has the next frame build the menu of menu button s, to
@@ -817,6 +877,7 @@ func (s *state) menuCorner() (x, y float32) {
 // openMenu shows the context menu built for the element id once the frame
 // is done.
 func (rt *engine) openMenu(id uint64, button bool, pm *platform.Menu, labels, keys, commands []string) {
+	tidySeparators(pm)
 	if len(pm.Items) == 0 {
 		return
 	}
@@ -825,6 +886,31 @@ func (rt *engine) openMenu(id uint64, button bool, pm *platform.Menu, labels, ke
 		pm.RightToLeft = true
 	}
 	mr.pending = &shownMenu{id: id, button: button, menu: pm, labels: labels, keys: keys, commands: commands, x: mr.x, y: mr.y, text: mr.text}
+}
+
+// tidySeparators drops the separators a menu (and its submenus) shows
+// first, last or after another, and the submenus left empty, so that a
+// menu built of groups that may each be empty shows no stray lines. The
+// items keep their IDs: a choice finds its item as before.
+func tidySeparators(m *platform.Menu) {
+	out := m.Items[:0]
+	for _, it := range m.Items {
+		if it.Submenu != nil {
+			tidySeparators(it.Submenu)
+			if len(it.Submenu.Items) == 0 && it.Type == platform.MenuItemSubmenu {
+				continue
+			}
+		}
+		if it.Type == platform.MenuItemSeparator && (len(out) == 0 || out[len(out)-1].Type == platform.MenuItemSeparator) {
+			continue
+		}
+		out = append(out, it)
+	}
+	for len(out) > 0 && out[len(out)-1].Type == platform.MenuItemSeparator {
+		out = out[:len(out)-1]
+	}
+	clear(m.Items[len(out):])
+	m.Items = out
 }
 
 // resolveMenu opens the menu asked for that no ContextMenu built, after a

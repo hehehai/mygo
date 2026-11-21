@@ -715,6 +715,8 @@ func cursorText(c Cursor) string {
 		return "grabbing"
 	case CursorNone:
 		return "none"
+	case cursorImage:
+		return "image"
 	case CursorProgress:
 		return "progress"
 	case CursorWait:

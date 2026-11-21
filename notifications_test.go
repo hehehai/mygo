@@ -260,3 +260,61 @@ func TestAppNotificationClick(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestNotificationActions: a kind's buttons reach the platform with the
+// notifications that name it; a button pressed (with text typed for a
+// reply) reaches the notification's OnAction and the app's
+// OnNotificationAction, also for one of an earlier run.
+func TestNotificationActions(t *testing.T) {
+	RegisterNotificationCategory("mail", []NotificationAction{
+		{ID: "archive", Title: "Archive"},
+		{ID: "reply", Title: "Reply", Input: true, InputButton: "Send", Placeholder: "Message"},
+		{ID: "delete", Title: "Delete", Destructive: true},
+	})
+	n := showNotification(t, NotificationOptions{ID: "thread-1", Title: "Grace", Body: "Lunch?", Category: "mail"})
+	got := fb.Notification("thread-1")
+	if got == nil || got.Category != "mail" || len(got.Actions) != 3 || !got.Actions[1].Input || got.Actions[1].InputButton != "Send" || !got.Actions[2].Destructive {
+		t.Fatalf("platform notification %+v", got)
+	}
+	var own, app []string
+	n.OnAction(func(action, text string) { own = append(own, action+":"+text) })
+	off := App.OnNotificationAction(func(id, action, text string) { app = append(app, id+"/"+action+":"+text) })
+	defer off()
+	onMain(func() { fb.PressNotificationAction("thread-1", "reply", "Sure, 12:30") })
+	onMain(func() { fb.PressNotificationAction("thread-1", "archive", "") })
+	// One of an earlier run: no Notification holds it.
+	onMain(func() { fb.PressNotificationAction("thread-9", "archive", "") })
+	if !slices.Equal(own, []string{"reply:Sure, 12:30", "archive:"}) {
+		t.Errorf("OnAction: %q", own)
+	}
+	if !slices.Equal(app, []string{"thread-1/reply:Sure, 12:30", "thread-1/archive:", "thread-9/archive:"}) {
+		t.Errorf("OnNotificationAction: %q", app)
+	}
+	// Without a category, no buttons.
+	showNotification(t, NotificationOptions{ID: "plain", Title: "x"})
+	if p := fb.Notification("plain"); p.Category != "" || len(p.Actions) != 0 {
+		t.Errorf("plain %+v", p)
+	}
+}
+
+// TestNotificationPassiveAndStatus: Passive reaches the platform; the
+// status is the backend's, not Known where it cannot tell.
+func TestNotificationPassiveAndStatus(t *testing.T) {
+	showNotification(t, NotificationOptions{ID: "quiet-1", Title: "Inboxly", Body: "Sent", Passive: true, Silent: true})
+	if got := fb.Notification("quiet-1"); got == nil || !got.Passive || !got.Silent {
+		t.Fatalf("platform notification %+v", got)
+	}
+	status := func() NotificationStatus {
+		ch := make(chan NotificationStatus, 1)
+		App.NotificationStatus(func(s NotificationStatus) { ch <- s })
+		return <-ch
+	}
+	if s := status(); s.Known {
+		t.Errorf("unset: %+v", s)
+	}
+	fb.Status = NotificationStatus{Known: true, Asked: true, Denied: true}
+	defer func() { fb.Status = NotificationStatus{} }()
+	if s := status(); !s.Known || !s.Denied || s.Allowed {
+		t.Errorf("denied: %+v", s)
+	}
+}

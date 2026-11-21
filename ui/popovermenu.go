@@ -1100,6 +1100,7 @@ func (rt *engine) beginDrawnMenu(e *node) (*drawnMenu, *Menu) {
 // returns the item chosen from it, nil if none.
 func (rt *engine) drawnMenuBuilt(e *node, d *drawnMenu, m *Menu) *platform.MenuItem {
 	run, pm := m.run, m.menu
+	tidySeparators(pm)
 	if !slices.ContainsFunc(pm.Items, func(it *platform.MenuItem) bool { return it.Visible && it.Type != platform.MenuItemSeparator }) {
 		rt.menu.drawn = nil
 		return nil
@@ -1350,7 +1351,13 @@ func (m *menuParts) drawnItem(d *drawnMenu, it *platform.MenuItem, mi *MenuItem,
 			if b == nil {
 				coreBox(c).Size(platform.MenuIconSize, platform.MenuIconSize).Shrink(0)
 			} else {
-				img := coreImage(c, b).Size(platform.MenuIconSize, platform.MenuIconSize).Fit(Contain).Shrink(0)
+				w, h := float32(platform.MenuIconSize), float32(platform.MenuIconSize)
+				if sc := float32(it.Icon.Scale); sc > 0 {
+					// Its own size (mygo.NewMenuIconScaled).
+					bw, bh := b.Size()
+					w, h = float32(bw)/sc, float32(bh)/sc
+				}
+				img := coreImage(c, b).Size(w, h).Fit(Contain).Shrink(0)
 				if !it.Enabled && !it.Icon.Template {
 					img.Opacity(0.4)
 				}

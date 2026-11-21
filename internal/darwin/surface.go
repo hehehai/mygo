@@ -160,6 +160,7 @@ type surface struct {
 	soonAfter time.Time
 	framePass uint64
 	cursor    platform.Cursor
+	cursorImg *platform.CursorImage // shown instead of cursor (SetCursorImage)
 	inside    bool
 	// secondaryClick is set while the primary button is down for a secondary
 	// click: a Control-click, or a press of the secondary button that an event
@@ -699,7 +700,51 @@ func (s *surface) applyCursor() {
 			return
 		}
 	}
+	if s.cursorImg != nil {
+		send(imageCursor(s.cursorImg), "set")
+		return
+	}
 	send(nsCursor(s.cursor), "set")
+}
+
+// imageCursors are the NSCursors made of pictures, by picture.
+var imageCursors = map[*platform.CursorImage]id{}
+
+// imageCursor returns the NSCursor of picture c: its pixels at its scale
+// a point (an NSImage of its points' size), its hot spot; the arrow for
+// a picture that cannot be made one.
+func imageCursor(c *platform.CursorImage) id {
+	if cur := imageCursors[c]; cur != 0 {
+		return cur
+	}
+	var png bytes.Buffer
+	if c.Image == nil || c.Image.Rect.Empty() || pngenc.Encode(&png, c.Image) != nil {
+		return send(class("NSCursor"), "arrowCursor")
+	}
+	b := png.Bytes()
+	var cur id
+	withPool(func() {
+		data := send(class("NSData"), "dataWithBytes:length:", uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)))
+		img := send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(data))
+		if img == 0 {
+			return
+		}
+		sc := max(c.Scale, 1)
+		msgSetSize(img, sel("setSize:"), NSSize{float64(c.Image.Rect.Dx()) / sc, float64(c.Image.Rect.Dy()) / sc})
+		cur = msgInitIDPoint(send(class("NSCursor"), "alloc"), sel("initWithImage:hotSpot:"), img, NSPoint{c.HotX, c.HotY})
+		release(img)
+	})
+	if cur == 0 {
+		return send(class("NSCursor"), "arrowCursor")
+	}
+	if len(imageCursors) >= 64 { // an app makes a few, and keeps them
+		for k, v := range imageCursors {
+			release(v)
+			delete(imageCursors, k)
+		}
+	}
+	imageCursors[c] = cur
+	return cur
 }
 
 // nsCursor returns the NSCursor of c. The diagonal resize cursors are the
@@ -828,8 +873,15 @@ func (s *surface) TakeKeyboard() {
 	}
 }
 
+func (s *surface) SetCursorImage(c *platform.CursorImage) {
+	s.cursorImg = c
+	if s.inside {
+		s.applyCursor()
+	}
+}
+
 func (s *surface) SetCursor(c platform.Cursor) {
-	s.cursor = c
+	s.cursor, s.cursorImg = c, nil
 	if s.inside {
 		s.applyCursor()
 	}

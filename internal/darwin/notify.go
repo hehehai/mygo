@@ -3,6 +3,7 @@
 package darwin
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/ebitengine/purego/objc"
@@ -67,12 +68,29 @@ func registerNotificationDelegate() {
 	}
 	classDef("MyGoNotificationDelegate", "NSObject", []string{"UNUserNotificationCenterDelegate"}, []objc.MethodDef{
 		method("userNotificationCenter:willPresentNotification:withCompletionHandler:", func(self id, _ objc.SEL, center, n id, handler uintptr) {
-			// Show banners even while the app is in the foreground.
+			// Show banners even while the app is in the foreground; a
+			// passive one only into the list, as in the background.
+			content := send(send(n, "request"), "content")
+			if respondsTo(content, "interruptionLevel") && uintptr(send(content, "interruptionLevel")) == unPassive {
+				callBlock(handler, 1<<3) // list
+				return
+			}
 			callBlock(handler, 1<<1|1<<3|1<<4) // sound | list | banner
 		}),
 		method("userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:", func(self id, _ objc.SEL, center, resp id, handler uintptr) {
 			ident := goString(send(send(send(send(resp, "notification"), "request"), "identifier"), "self"))
-			theBackend.runOnMain(func() { theBackend.h.NotificationClicked(ident) })
+			action := goString(send(resp, "actionIdentifier"))
+			text := ""
+			if respondsTo(resp, "userText") {
+				text = goString(send(resp, "userText"))
+			}
+			switch action {
+			case "", unDefaultAction:
+				theBackend.runOnMain(func() { theBackend.h.NotificationClicked(ident) })
+			case unDismissAction:
+			default:
+				theBackend.runOnMain(func() { theBackend.h.NotificationAction(ident, action, text) })
+			}
 			callBlock(handler)
 		}),
 	})
@@ -109,6 +127,32 @@ func (b *Backend) attachNotificationDelegate() {
 type waitingNotification struct {
 	n    *platform.Notification
 	done func(error)
+}
+
+// unPassive is UNNotificationInterruptionLevelPassive: into Notification
+// Center, no banner, no sound.
+const unPassive = 0
+
+// NotificationStatus reads the app's notification settings
+// (getNotificationSettingsWithCompletionHandler:); done runs on the main
+// thread.
+func (b *Backend) NotificationStatus(done func(platform.NotificationStatus)) {
+	if !b.NotificationsSupported() {
+		done(platform.NotificationStatus{})
+		return
+	}
+	withPool(func() {
+		blk := newBlock(func(_ objc.Block, s id) {
+			// UNAuthorizationStatus: 0 not determined, 1 denied, 2 authorized,
+			// 3 provisional, 4 ephemeral; UNAlertStyle: 0 none, 1 banner, 2 alert.
+			auth := int(uintptr(send(s, "authorizationStatus")))
+			st := platform.NotificationStatus{Known: true, Asked: auth != 0, Allowed: auth >= 2, Denied: auth == 1,
+				Style: int(uintptr(send(s, "alertStyle")))}
+			b.runOnMain(func() { done(st) })
+		})
+		send(notificationCenter(), "getNotificationSettingsWithCompletionHandler:", uintptr(blk))
+		blk.Release()
+	})
 }
 
 // notifyOptions are the permissions asked for: badge, sound and alert.
@@ -149,11 +193,78 @@ func (b *Backend) ShowNotification(n *platform.Notification, done func(error)) {
 	})
 }
 
+// The response's actionIdentifier for a click on the notification itself
+// and for its dismissal.
+const (
+	unDefaultAction = "com.apple.UNNotificationDefaultActionIdentifier"
+	unDismissAction = "com.apple.UNNotificationDismissActionIdentifier"
+)
+
+// UNNotificationActionOptions.
+const (
+	unActionDestructive = 1 << 1
+	unActionForeground  = 1 << 2
+)
+
+// declareCategory gives the center a notification's kind and its buttons
+// (all the kinds known: setNotificationCategories: replaces the set),
+// once and when its buttons change.
+func (b *Backend) declareCategory(n *platform.Notification) {
+	if n.Category == "" {
+		return
+	}
+	if old, ok := b.notifyCategories[n.Category]; ok && slices.Equal(old, n.Actions) {
+		return
+	}
+	if b.notifyCategories == nil {
+		b.notifyCategories = map[string][]platform.NotificationAction{}
+	}
+	b.notifyCategories[n.Category] = slices.Clone(n.Actions)
+	var cats []id
+	for cid, actions := range b.notifyCategories {
+		cats = append(cats, notificationCategory(cid, actions))
+	}
+	send(notificationCenter(), "setNotificationCategories:", uintptr(send(class("NSSet"), "setWithArray:", uintptr(nsArray(cats...)))))
+}
+
+// notificationCategory is a UNNotificationCategory (autoreleased) of the
+// buttons actions.
+func notificationCategory(cid string, actions []platform.NotificationAction) id {
+	var as []id
+	for _, a := range actions {
+		opts := uintptr(0)
+		if a.Destructive {
+			opts |= unActionDestructive
+		}
+		if a.Foreground {
+			opts |= unActionForeground
+		}
+		var act id
+		if a.Input {
+			button := a.InputButton
+			if button == "" {
+				button = a.Title
+			}
+			act = send(class("UNTextInputNotificationAction"), "actionWithIdentifier:title:options:textInputButtonTitle:textInputPlaceholder:",
+				uintptr(nsString(a.ID)), uintptr(nsString(a.Title)), opts, uintptr(nsString(button)), uintptr(nsString(a.Placeholder)))
+		} else {
+			act = send(class("UNNotificationAction"), "actionWithIdentifier:title:options:",
+				uintptr(nsString(a.ID)), uintptr(nsString(a.Title)), opts)
+		}
+		if act != 0 {
+			as = append(as, act)
+		}
+	}
+	return send(class("UNNotificationCategory"), "categoryWithIdentifier:actions:intentIdentifiers:options:",
+		uintptr(nsString(cid)), uintptr(nsArray(as...)), uintptr(nsArray()), 0)
+}
+
 // addNotification gives the system a request to show a notification. Its
 // trigger is nil, which shows it at once.
 func (b *Backend) addNotification(n *platform.Notification, done func(error)) {
 	b.cancelPreparingNotification(n.ID)
 	withPool(func() {
+		b.declareCategory(n)
 		content := autorelease(alloc("UNMutableNotificationContent"))
 		send(content, "setTitle:", uintptr(nsString(n.Title)))
 		if n.Subtitle != "" {
@@ -165,6 +276,12 @@ func (b *Backend) addNotification(n *platform.Notification, done func(error)) {
 		}
 		if n.Group != "" {
 			send(content, "setThreadIdentifier:", uintptr(nsString(n.Group)))
+		}
+		if n.Passive && respondsTo(content, "setInterruptionLevel:") {
+			send(content, "setInterruptionLevel:", unPassive)
+		}
+		if n.Category != "" {
+			send(content, "setCategoryIdentifier:", uintptr(nsString(n.Category)))
 		}
 		if len(n.Image) > 0 && attachNotificationImage != nil {
 			done = attachNotificationImage(content, n.Image, done)

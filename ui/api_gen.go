@@ -4699,6 +4699,20 @@ func (_handle Element) Cursor(c Cursor) Element {
 	return wrapElement(_node.Cursor(c))
 }
 
+// CursorImage shows c as the pointer over the element, as Cursor shows a
+// shape, picked as Cursor is (the innermost element under the pointer that
+// sets one). Where the platform has no pictures for pointers (all but
+// macOS), the default pointer shows. nil sets none.
+func (_handle Element) CursorImage(c *ImageCursor) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.CursorImage(c))
+}
+
 // Debug outlines the element and every element inside it, with their
 // padding and margins, to see the layout.
 func (_handle Element) Debug() Element {

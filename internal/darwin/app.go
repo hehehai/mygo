@@ -53,6 +53,9 @@ type Backend struct {
 	notifyAnswered  bool
 	notifyWaiting   []waitingNotification
 	notifyPreparing map[string]func()
+	// notifyCategories are the kinds of notification given to the
+	// center, by id: their buttons as last given.
+	notifyCategories map[string][]platform.NotificationAction
 
 	stepping       int
 	quitAfterModal bool
@@ -383,6 +386,14 @@ func registerAppDelegate() {
 			if len(links) > 0 {
 				theBackend.h.OpenURLs(links)
 			}
+		}),
+		// Spotlight results of the app opened, Handoffs (NSUserActivity).
+		method("application:willContinueUserActivityWithType:", func(self id, _ objc.SEL, app, activityType id) bool {
+			return true
+		}),
+		method("application:continueUserActivity:restorationHandler:", func(self id, _ objc.SEL, app, activity id, handler uintptr) bool {
+			theBackend.continueActivity(activity)
+			return true
 		}),
 		method("applicationSupportsSecureRestorableState:", func(self id, _ objc.SEL, app id) bool { return true }),
 		method("applicationShouldTerminateAfterLastWindowClosed:", func(self id, _ objc.SEL, app id) bool { return false }),

@@ -96,7 +96,10 @@ type Application struct {
 	onOpenFile        listeners[func(string)]
 	onWindowCreated   listeners[func(*Window)]
 
-	onNotificationClick listeners[func(string)]
+	onNotificationClick  listeners[func(string)]
+	onNotificationAction listeners[func(string, string, string)]
+
+	onContinueActivity listeners[func(UserActivity)]
 }
 
 // App is the application singleton.
@@ -683,6 +686,16 @@ func (a *Application) OnNotificationClick(fn func(id string)) (off func()) {
 	return a.onNotificationClick.add(fn, false)
 }
 
+// OnNotificationAction is called with the notification's ID, the button
+// pressed (NotificationAction.ID) and the text typed (an Input action's)
+// for every button of the app's notifications the user presses, after the
+// notification's OnAction listeners: also one of an earlier run, as
+// OnNotificationClick. Register it before Run to receive the one that
+// launched the app.
+func (a *Application) OnNotificationAction(fn func(id, action, text string)) (off func()) {
+	return a.onNotificationAction.add(fn, false)
+}
+
 // OnWindowCreated is called for every new window.
 func (a *Application) OnWindowCreated(fn func(w *Window)) (off func()) {
 	return a.onWindowCreated.add(fn, false)
@@ -830,6 +843,12 @@ func (appHandler) PowerEvent(event string) {
 }
 func (appHandler) HotkeyPressed(id int)          { GlobalShortcut.pressed(id) }
 func (appHandler) NotificationClicked(id string) { notificationClicked(id) }
+func (appHandler) NotificationAction(id, action, text string) {
+	notificationAction(id, action, text)
+}
+func (appHandler) ContinueActivity(a platform.UserActivity) {
+	fire1(&App.onContinueActivity, userActivity(a))
+}
 
 func (appHandler) NetworkChanged(s platform.NetworkStatus) { Network.changed(networkStatus(s)) }
 func (appHandler) HotkeyBound(id int, keys string)         { GlobalShortcut.bound(id, keys) }

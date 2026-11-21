@@ -1259,14 +1259,30 @@ func LinkMenuIcons() { menuImage = iconImage }
 // aspect, from the representation fit for the display (an image of 32
 // pixels for Retina), and tints a template image as the menu's text, white
 // on the highlight. Its menu items show their state (the check) beside it.
+//
+// An icon of a symbol is the SF Symbol's image (macOS 11+), at the size
+// AppKit gives it beside the menu's text; an icon with a Scale is its
+// pixels at that scale.
 func iconImage(ic *platform.MenuIcon) id {
 	img, _ := ic.Native(func() any {
+		if ic.Symbol != "" {
+			img := send(class("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", uintptr(nsString(ic.Symbol)), 0)
+			if img == 0 {
+				return nil
+			}
+			retain(img)
+			runtime.AddCleanup(ic, func(img id) { release(img) }, img)
+			return img
+		}
 		img := send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(ic.PNG)))
 		if img == 0 {
 			return nil
 		}
 		size := msgSize(img, sel("size"))
-		if box := float64(platform.MenuIconSize); size.Width > 0 && size.Height > 0 {
+		if rep := send(send(img, "representations"), "firstObject"); ic.Scale > 0 && rep != 0 {
+			w, h := sendInt(rep, "pixelsWide"), sendInt(rep, "pixelsHigh")
+			msgSetSize(img, sel("setSize:"), NSSize{float64(w) / ic.Scale, float64(h) / ic.Scale})
+		} else if box := float64(platform.MenuIconSize); size.Width > 0 && size.Height > 0 {
 			scale := box / max(size.Width, size.Height)
 			msgSetSize(img, sel("setSize:"), NSSize{size.Width * scale, size.Height * scale})
 		}
@@ -1445,6 +1461,9 @@ type tray struct {
 	dark bool
 	// mono draws the title in the monospaced font (SetTitleMonospaced).
 	mono bool
+	// overlay is a MyGoTrayOverlay over the button's image (SetOverlay)
+	// and dot a MyGoTrayDot at its top right (SetDot), 0 for none.
+	overlay, dot id
 	// clicked is where on screen the copy of the item that the user last
 	// clicked is, and of the frame the item's window had then. macOS 26
 	// shows a menu bar item on each display from one window, which is on
@@ -1499,6 +1518,162 @@ func registerTrayTarget() {
 
 var trayTarget id
 
+// The tray dot (SetDot): 5 points across, its centre 3.5 points in from
+// the image's top and right edges.
+const trayDotSize, trayDotInset = 5.0, 3.5
+
+// registerTrayDecorations makes the classes of what a tray draws over its
+// icon: an image view (SetOverlay) and a round box (SetDot). Clicks go
+// through both to the button (hitTest: nil), and each keeps to the
+// button's image as the button is resized.
+func registerTrayDecorations() {
+	classDef("MyGoTrayOverlay", "NSImageView", nil, []objc.MethodDef{
+		method("hitTest:", func(self id, _ objc.SEL, p NSPoint) id { return 0 }),
+		method("resizeWithOldSuperviewSize:", func(self id, _ objc.SEL, _ NSSize) { placeTrayOverlay(self) }),
+	})
+	classDef("MyGoTrayDot", "NSBox", nil, []objc.MethodDef{
+		method("hitTest:", func(self id, _ objc.SEL, p NSPoint) id { return 0 }),
+		method("resizeWithOldSuperviewSize:", func(self id, _ objc.SEL, _ NSSize) { placeTrayDot(self) }),
+	})
+}
+
+var trayDecorationClasses bool
+
+// trayImageRect is where the button, v's superview, draws its image: the
+// rect its cell gives it, centred in a button with no title and on the
+// left of one with a title (a count beside the icon). ok is false when v
+// is in no button.
+func trayImageRect(v id) (button id, r NSRect, ok bool) {
+	button = send(v, "superview")
+	if button == 0 {
+		return 0, NSRect{}, false
+	}
+	return button, msgRectToRect(send(button, "cell"), sel("imageRectForBounds:"), msgRect(button, sel("bounds"))), true
+}
+
+// placeTrayOverlay frames overlay v exactly over its button's image, which
+// moves as a title comes, changes width and goes.
+func placeTrayOverlay(v id) {
+	if _, r, ok := trayImageRect(v); ok {
+		msgSetRect(v, sel("setFrame:"), r)
+	}
+}
+
+// placeTrayDot puts dot v at its button's image's top right corner.
+func placeTrayDot(v id) {
+	button, r, ok := trayImageRect(v)
+	if !ok {
+		return
+	}
+	x := r.Origin.X + r.Size.Width - trayDotInset
+	y := r.Origin.Y + r.Size.Height - trayDotInset
+	if sendBool(button, "isFlipped") {
+		y = r.Origin.Y + trayDotInset
+	}
+	const half = trayDotSize / 2
+	msgSetRect(v, sel("setFrame:"), NSRect{Origin: NSPoint{x - half, y - half}, Size: NSSize{trayDotSize, trayDotSize}})
+}
+
+// placeDecorations frames the overlay and the dot, if any, after the
+// button's image or title changed.
+func (t *tray) placeDecorations() {
+	if t.overlay != 0 {
+		placeTrayOverlay(t.overlay)
+	}
+	if t.dot != 0 {
+		placeTrayDot(t.dot)
+	}
+}
+
+// decoration adds a view of class name over the button, 0 if it cannot.
+func (t *tray) decoration(name string) id {
+	if !trayDecorationClasses {
+		registerTrayDecorations()
+		trayDecorationClasses = true
+	}
+	v := msgInitRect(send(class(name), "alloc"), sel("initWithFrame:"), msgRect(t.button, sel("bounds")))
+	if v != 0 {
+		send(t.button, "addSubview:", uintptr(v))
+	}
+	return v
+}
+
+// removeDecoration takes view *v off the button.
+func removeDecoration(v *id) {
+	if *v != 0 {
+		send(*v, "removeFromSuperview")
+		release(*v)
+		*v = 0
+	}
+}
+
+// SetOverlay draws png over the icon as it is (not a template), where the
+// button draws its image and sized as SetImage sizes the icon; nil or
+// empty removes it.
+func (t *tray) SetOverlay(png []byte) error {
+	if t.item == 0 {
+		return nil
+	}
+	var err error
+	withPool(func() {
+		if len(png) == 0 {
+			removeDecoration(&t.overlay)
+			return
+		}
+		img := trayImage(png)
+		if img == 0 {
+			err = errInvalidImage
+			return
+		}
+		if t.overlay == 0 {
+			if t.overlay = t.decoration("MyGoTrayOverlay"); t.overlay == 0 {
+				return
+			}
+			send(t.overlay, "setImageScaling:", 2)   // NSImageScaleNone: pixel for pixel, as the button draws its image
+			send(t.overlay, "setImageAlignment:", 0) // NSImageAlignCenter, in a frame of the button's image
+		}
+		send(img, "setTemplate:", boolArg(false))
+		send(t.overlay, "setImage:", uintptr(img))
+		t.placeDecorations()
+	})
+	return err
+}
+
+// SetDot shows a dot of its own color over the image's top right corner,
+// which a template image cannot have: a round NSBox above the button's
+// image. on false removes it.
+func (t *tray) SetDot(c platform.Color, on bool) {
+	if t.item == 0 {
+		return
+	}
+	withPool(func() {
+		if !on {
+			removeDecoration(&t.dot)
+			return
+		}
+		if t.dot == 0 {
+			if t.dot = t.decoration("MyGoTrayDot"); t.dot == 0 {
+				return
+			}
+			send(t.dot, "setBoxType:", 4)       // NSBoxCustom
+			send(t.dot, "setTitlePosition:", 0) // NSNoTitle
+			msgSetFloat(t.dot, sel("setBorderWidth:"), 0)
+			msgSetFloat(t.dot, sel("setCornerRadius:"), trayDotSize/2)
+		}
+		send(t.dot, "setFillColor:", uintptr(nsColor(c)))
+		t.placeDecorations()
+	})
+}
+
+// Handle is the status item's button (NSStatusBarButton*), 0 once the
+// item is removed.
+func (t *tray) Handle() uintptr {
+	if t.item == 0 {
+		return 0
+	}
+	return uintptr(t.button)
+}
+
 func (b *Backend) NewTray(_ string, h platform.TrayHandler) (platform.Tray, error) {
 	if trayTarget == 0 {
 		trayTarget = alloc("MyGoTrayTarget")
@@ -1544,22 +1719,14 @@ func (t *tray) SetID(id string) {
 func (t *tray) SetImage(png []byte, template bool) error {
 	var err error
 	withPool(func() {
-		img := autorelease(send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(png))))
+		img := trayImage(png)
 		if img == 0 {
 			err = errInvalidImage
 			return
 		}
-		// Menu bar icons are 18 points tall, unless the image says how
-		// big it is (a PNG with its resolution, e.g. 144 dpi for 2×) and
-		// fits the menu bar.
-		size := msgSize(img, sel("size"))
-		if w, h, ok := declaredTraySize(img, size); ok {
-			msgSetSize(img, sel("setSize:"), NSSize{w, h})
-		} else if size.Height > 0 {
-			msgSetSize(img, sel("setSize:"), NSSize{size.Width * 18 / size.Height, 18})
-		}
 		send(img, "setTemplate:", boolArg(template))
 		send(t.button, "setImage:", uintptr(img))
+		t.placeDecorations()
 	})
 	return err
 }
@@ -1585,20 +1752,46 @@ func declaredTraySize(img id, size NSSize) (w, h float64, ok bool) {
 	return pw / scale, ph / scale, true
 }
 
+// trayImage is png as an NSImage (autoreleased) of the size a menu bar
+// icon is drawn at, 0 when it is not an image: the icon's (SetImage) and
+// the overlay's (SetOverlay), which must match.
+func trayImage(png []byte) id {
+	img := autorelease(send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(png))))
+	if img == 0 {
+		return 0
+	}
+	// Menu bar icons are 18 points tall, unless the image says how big
+	// it is (a PNG with its resolution, e.g. 144 dpi for 2×) and fits the
+	// menu bar.
+	size := msgSize(img, sel("size"))
+	if w, h, ok := declaredTraySize(img, size); ok {
+		msgSetSize(img, sel("setSize:"), NSSize{w, h})
+	} else if size.Height > 0 {
+		msgSetSize(img, sel("setSize:"), NSSize{size.Width * 18 / size.Height, 18})
+	}
+	return img
+}
+
 func (t *tray) SetTitle(title string) {
 	// The monospaced font has no figure space: AppKit would draw one of
 	// another font, narrower than the digits it stands for.
 	if t.mono {
 		title = strings.ReplaceAll(title, "\u2007", " ")
 	}
-	withPool(func() { send(t.button, "setTitle:", uintptr(nsString(title))) })
+	withPool(func() {
+		send(t.button, "setTitle:", uintptr(nsString(title)))
+		t.placeDecorations() // the image moves left of a title, back to the centre without
+	})
 }
 
 // SetTitleMonospaced draws the titles set from here on in the system's
 // monospaced font, or in its font again.
 func (t *tray) SetTitleMonospaced(on bool) {
 	t.mono = on
-	withPool(t.setTitleFont)
+	withPool(func() {
+		t.setTitleFont()
+		t.placeDecorations()
+	})
 }
 
 // setTitleFont gives the button the font of its title, at the menu bar
@@ -1715,6 +1908,8 @@ func (t *tray) Destroy() {
 	delete(t.b.trays, t.button)
 	send(t.button, "removeObserver:forKeyPath:", uintptr(trayTarget), uintptr(nsString("effectiveAppearance")))
 	dropOwner(t.owner)
+	removeDecoration(&t.overlay)
+	removeDecoration(&t.dot)
 	send(send(class("NSStatusBar"), "systemStatusBar"), "removeStatusItem:", uintptr(t.item))
 	release(t.item)
 	t.item = 0

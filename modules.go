@@ -19,6 +19,7 @@ import (
 
 	"github.com/egoist/mygo/internal/accelerator"
 	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/sysguard"
 	"github.com/egoist/mygo/transfer"
 )
 
@@ -34,18 +35,27 @@ var Shell ShellModule
 // in the default browser.
 func (ShellModule) OpenExternal(url string) error {
 	needsApp("Shell.OpenExternal")
+	if !sysguard.Allows(GuardOpenURL, url) {
+		return ErrGuarded
+	}
 	return onMainValue(func() error { return backend().Shell().OpenExternal(url) })
 }
 
 // OpenPath opens a file or directory with the default application.
 func (ShellModule) OpenPath(path string) error {
 	needsApp("Shell.OpenPath")
+	if !sysguard.Allows(GuardOpenPath, path) {
+		return ErrGuarded
+	}
 	return onMainValue(func() error { return backend().Shell().OpenPath(path) })
 }
 
 // ShowItemInFolder reveals a file in the file manager.
 func (ShellModule) ShowItemInFolder(path string) {
 	needsApp("Shell.ShowItemInFolder")
+	if !sysguard.Allows(GuardShowItem, path) {
+		return
+	}
 	onMain(func() { backend().Shell().ShowItemInFolder(path) })
 }
 
@@ -64,6 +74,9 @@ func (ShellModule) TrashItem(path string) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
+	}
+	if !sysguard.Allows(GuardTrash, abs) {
+		return ErrGuarded
 	}
 	if sh := backend().Shell(); anyThreadTrash(sh) {
 		return sh.TrashItem(abs)
@@ -98,6 +111,9 @@ func (ShellModule) TrashItemResult(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
+	}
+	if !sysguard.Allows(GuardTrash, abs) {
+		return "", ErrGuarded
 	}
 	if sh := backend().Shell(); anyThreadTrash(sh) {
 		return sh.TrashItemResult(abs)
@@ -216,6 +232,9 @@ func (ShellModule) LaunchApp(app InstalledApp) error {
 	if app.Path == "" {
 		return errors.New("mygo: Shell.LaunchApp: the app has no path")
 	}
+	if !sysguard.Allows(GuardLaunchApp, app.Path) {
+		return ErrGuarded
+	}
 	return onMainValue(func() error { return backend().Shell().OpenApplication(app.Path) })
 }
 
@@ -289,6 +308,9 @@ func (c ClipboardModule) WriteImage(data []byte) error {
 // Clear empties the clipboard.
 func (ClipboardModule) Clear() {
 	needsApp("Clipboard.Clear")
+	if !sysguard.Allows(GuardClipboard, "") {
+		return
+	}
 	onMain(func() {
 		if !clipboardProviding && !clipboardStopped {
 			withClipboardOperation(func() { backend().Clipboard().Clear() })
@@ -1094,6 +1116,72 @@ func (t *Tray) Dark() bool {
 // again.
 func (t *Tray) OnAppearanceChange(fn func()) (off func()) { return t.onAppearance.add(fn, false) }
 
+// ErrTrayOverlay is what SetOverlay and SetDot return where trays draw
+// nothing over their icons (all but macOS).
+var ErrTrayOverlay = errors.New("mygo: this platform's tray draws nothing over its icon")
+
+// SetOverlay draws a PNG image over the icon in its own colors, not as a
+// template, where the icon is drawn (centred, or on the left of a title,
+// following the title as it changes) and sized as SetIcon sizes it; nil
+// removes it. With a template icon that leaves out a part of the mark,
+// the overlay draws that part in color — an accent that says "look" —
+// while the rest follows the menu bar; Dark says which bar it is on, to
+// pick a color with contrast. Clicks go through it to the icon. macOS;
+// elsewhere ErrTrayOverlay.
+func (t *Tray) SetOverlay(png []byte) error {
+	var err error
+	t.do(func(n platform.Tray) {
+		d, ok := n.(platform.TrayDecorations)
+		if !ok {
+			err = ErrTrayOverlay
+			return
+		}
+		err = d.SetOverlay(png)
+	})
+	return err
+}
+
+// SetDot shows a dot of a CSS color (see WindowOptions.BackgroundColor's
+// forms) over the icon's top right corner, 5 points across, its centre
+// 3.5 points in from the icon's top and right edges, following the icon
+// as a title comes and goes; "" removes it. The dot keeps its color over a
+// template icon, which macOS tints but cannot color, so a template icon
+// can say "busy" in red: leave a gap in the icon where the dot goes. It
+// returns an error for a color it cannot parse, and ErrTrayOverlay where
+// trays draw nothing over their icons (all but macOS).
+func (t *Tray) SetDot(color string) error {
+	var c platform.Color
+	if color != "" {
+		var err error
+		if c, err = parseColor(color); err != nil {
+			return err
+		}
+	}
+	var err error
+	t.do(func(n platform.Tray) {
+		d, ok := n.(platform.TrayDecorations)
+		if !ok {
+			err = ErrTrayOverlay
+			return
+		}
+		d.SetDot(c, color != "")
+	})
+	return err
+}
+
+// NativeButton returns the icon's native view, for native APIs MyGo does
+// not wrap (layers, accessibility): the NSStatusBarButton* on macOS; 0 on
+// other platforms and once the icon is destroyed. Use it on the main
+// thread, and only while the icon lives.
+func (t *Tray) NativeButton() uintptr {
+	return onMainValue(func() uintptr {
+		if d, ok := t.native.(platform.TrayDecorations); ok && t.native != nil {
+			return d.Handle()
+		}
+		return 0
+	})
+}
+
 // NotificationOptions configures a desktop notification.
 type NotificationOptions struct {
 	// ID identifies the notification: App.OnNotificationClick receives
@@ -1106,6 +1194,10 @@ type NotificationOptions struct {
 	Body     string
 	// Silent suppresses the notification sound.
 	Silent bool
+	// Passive puts it in Notification Center without a banner or a sound,
+	// even while the app is in front (macOS 12 and later; elsewhere it
+	// shows as usual).
+	Passive bool
 	// Group gathers the notifications that share it in one stack of
 	// Notification Center (macOS), such as the messages of a conversation.
 	// Empty leaves them in the app's.
@@ -1124,6 +1216,65 @@ type NotificationOptions struct {
 	// the communication fails, it shows the ordinary notification.
 	// Other platforms ignore Sender. NewNotification copies it and Avatar.
 	Sender *NotificationSender
+	// Category is the kind of notification, whose buttons
+	// RegisterNotificationCategory declared (macOS; elsewhere none show).
+	Category string
+}
+
+// NotificationAction is a button of a kind of notification
+// (RegisterNotificationCategory).
+type NotificationAction struct {
+	// ID is what Notification.OnAction and App.OnNotificationAction
+	// receive.
+	ID    string
+	Title string
+	// Input makes it a text field with a button (a reply): the text typed
+	// comes with the action. InputButton names the button ("Send"),
+	// Title by default; Placeholder hints in the field.
+	Input       bool
+	InputButton string
+	Placeholder string
+	// Destructive shows it as such (red).
+	Destructive bool
+	// Foreground brings the app to the front, as a click does; the others
+	// run with the app in the background.
+	Foreground bool
+}
+
+var notificationCategories struct {
+	sync.Mutex
+	byID map[string][]NotificationAction
+}
+
+// RegisterNotificationCategory declares a kind of notification and the
+// buttons its notifications show (macOS: a UNNotificationCategory; a
+// banner shows up to four buttons, an alert or the expanded notification
+// more). Notifications name it in NotificationOptions.Category.
+// Registering a category again replaces its buttons for the notifications
+// shown from then on. Other platforms show no buttons.
+func RegisterNotificationCategory(id string, actions []NotificationAction) {
+	notificationCategories.Lock()
+	if notificationCategories.byID == nil {
+		notificationCategories.byID = map[string][]NotificationAction{}
+	}
+	notificationCategories.byID[id] = slices.Clone(actions)
+	notificationCategories.Unlock()
+}
+
+// categoryActions are the buttons of category id, as the platform takes
+// them.
+func categoryActions(id string) []platform.NotificationAction {
+	if id == "" {
+		return nil
+	}
+	notificationCategories.Lock()
+	defer notificationCategories.Unlock()
+	var out []platform.NotificationAction
+	for _, a := range notificationCategories.byID[id] {
+		out = append(out, platform.NotificationAction{ID: a.ID, Title: a.Title, Input: a.Input, InputButton: a.InputButton,
+			Placeholder: a.Placeholder, Destructive: a.Destructive, Foreground: a.Foreground})
+	}
+	return out
 }
 
 // NotificationSender is the sender of an incoming direct message.
@@ -1139,9 +1290,10 @@ type NotificationSender struct {
 
 // Notification is a desktop notification.
 type Notification struct {
-	id      string
-	opts    NotificationOptions
-	onClick listeners[func()]
+	id       string
+	opts     NotificationOptions
+	onClick  listeners[func()]
+	onAction listeners[func(string, string)]
 }
 
 var notifications struct {
@@ -1230,6 +1382,9 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if !sysguard.Allows(GuardNotification, n.id) {
+		return ErrGuarded
+	}
 	notifications.Lock()
 	if notifications.byID == nil {
 		notifications.byID = map[string]*Notification{}
@@ -1259,8 +1414,11 @@ func (n *Notification) ShowContext(ctx context.Context) error {
 			Subtitle: n.opts.Subtitle,
 			Body:     n.opts.Body,
 			Silent:   n.opts.Silent,
+			Passive:  n.opts.Passive,
 			Group:    n.opts.Group,
 			Image:    n.opts.Image,
+			Category: n.opts.Category,
+			Actions:  categoryActions(n.opts.Category),
 		}
 		if s := n.opts.Sender; s != nil {
 			note.Sender = &platform.NotificationSender{ID: s.ID, Name: s.Name, Avatar: s.Avatar}
@@ -1325,6 +1483,43 @@ func ClearNotifications() {
 
 // OnClick is called when the user clicks the notification.
 func (n *Notification) OnClick(fn func()) (off func()) { return n.onClick.add(fn, false) }
+
+// OnAction is called when the user presses one of the notification's
+// buttons (NotificationOptions.Category): the button's ID, and the text
+// typed for an Input one.
+func (n *Notification) OnAction(fn func(action, text string)) (off func()) {
+	return n.onAction.add(fn, false)
+}
+
+func notificationAction(id, action, text string) {
+	notifications.Lock()
+	n := notifications.byID[id]
+	notifications.Unlock()
+	if n != nil {
+		fire2(&n.onAction, action, text)
+	}
+	fire3(&App.onNotificationAction, id, action, text)
+}
+
+// NotificationStatus is whether the user allows the app's notifications
+// and how they show (System Settings › Notifications).
+type NotificationStatus = platform.NotificationStatus
+
+// NotificationStatus asks the system whether the app's notifications are
+// allowed and how they show, for an app to say so in its settings and
+// offer System Settings; fn runs on the main thread. It does not ask the
+// user. A platform that cannot tell answers a status that is not Known.
+func (a *Application) NotificationStatus(fn func(NotificationStatus)) {
+	needsApp("App.NotificationStatus")
+	onMain(func() {
+		r, ok := backend().(platform.NotificationStatusReader)
+		if !ok {
+			fn(NotificationStatus{})
+			return
+		}
+		r.NotificationStatus(fn)
+	})
+}
 
 func notificationClicked(id string) {
 	notifications.Lock()

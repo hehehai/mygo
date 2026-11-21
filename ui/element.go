@@ -508,6 +508,7 @@ type node struct {
 	opacitySet bool
 	undimmed   bool // kept at its opacity while disabled (DimDisabled)
 	cursor     Cursor
+	cursorImg  *ImageCursor // shown while cursor is cursorImage+1
 	paintFn    func(p *Painter, r Rect)
 	// hitFn tells where in its box the element takes the pointer
 	// (HitTest).
@@ -765,8 +766,8 @@ type node struct {
 	// each element of a chunk then begins on one, and a walk of a
 	// container's children reads a child's box and style in the same lines
 	// whichever child it is on, rather than in one more line of most of
-	// them.
-	_ [2]uint32
+	// them. cursorImg took the 8 bytes of padding that made it so: a field
+	// added must keep the size a multiple of 64 bytes (TestNodeSize).
 }
 
 // measure is the height of an element at a width (naturalHeight).
