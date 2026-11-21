@@ -773,7 +773,10 @@ type node struct {
 	// container's children reads a child's box and style in the same lines
 	// whichever child it is on, rather than in one more line of most of
 	// them. cursorImg took the 8 bytes of padding that made it so: a field
-	// added must keep the size a multiple of 64 bytes (TestNodeSize).
+	// added must keep the size a multiple of 64 bytes (TestNodeSize):
+	// the fork's fields (cursor images, pressed within, live values, …)
+	// left it 16 bytes over, padded to the next line here.
+	_ [48]byte
 }
 
 // measure is the height of an element at a width (naturalHeight).
