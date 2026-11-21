@@ -576,6 +576,22 @@ const (
 	DragRegionAt
 )
 
+// GesturePhase is where a touchpad's gesture is, for the backends that
+// tell (macOS): its first event, one of those that follow, or its last
+// (the fingers lifted, or the system cancelled it).
+type GesturePhase uint8
+
+const (
+	// GestureNone: the backend does not tell, as for a mouse wheel.
+	GestureNone GesturePhase = iota
+	GestureBegan
+	GestureChanged
+	GestureEnded
+	// GestureSmart is a gesture of one event: two fingers tapped twice
+	// (smart zoom), Scale 1.
+	GestureSmart
+)
+
 // EditCommands are the menu roles of edit commands, which native UI takes as
 // a SurfaceCommand and answers SurfaceCommandEnabled for.
 var EditCommands = map[string]bool{
@@ -600,6 +616,10 @@ type SurfaceEvent struct {
 	// Scale is PointerZoom's, and Rotation the radians clockwise two fingers
 	// turned since the last, on touch screens.
 	Scale, Rotation float64
+	// Phase is where the touchpad's gesture of a PointerZoom or a precise
+	// PointerScroll is (a scroll's glide after the fingers lifted, with
+	// Momentum, has its own), GestureNone where the backend does not tell.
+	Phase GesturePhase
 	// Pointer is the device of PointerMove, PointerDown and PointerUp, as
 	// Pointer Events' pointerType, and Pressure how hard a pen or a finger
 	// presses, from 0 to 1, where the device tells: 0 where it does not,

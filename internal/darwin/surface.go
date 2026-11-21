@@ -873,6 +873,22 @@ func (s *surface) location(ev id) (float64, float64) {
 	return p.X, p.Y
 }
 
+// gesturePhase is an NSEvent's phase (NSEventPhase), or its momentumPhase,
+// as a gesture's: NSEventPhaseNone is none (a mouse wheel, an event of no
+// gesture), and a gesture's fingers resting (MayBegin, Stationary) are
+// between its first event and its last.
+func gesturePhase(phase uint) platform.GesturePhase {
+	switch {
+	case phase == 0:
+		return platform.GestureNone
+	case phase&0x1 != 0: // NSEventPhaseBegan
+		return platform.GestureBegan
+	case phase&(0x8|0x10) != 0: // NSEventPhaseEnded, NSEventPhaseCancelled
+		return platform.GestureEnded
+	}
+	return platform.GestureChanged
+}
+
 // sideButton sends a mouse's back or forward button pressed or released
 // as KeyBack or KeyForward.
 func (s *surface) sideButton(kind platform.SurfaceEventKind, back bool, mods platform.Modifiers) {
@@ -1350,7 +1366,17 @@ func registerSurfaceClass() {
 			// magnification is how much the pinch grew the content since
 			// its last event, as a fraction of its size then.
 			x, y := s.location(ev)
-			s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: x, Y: y, Scale: 1 + msgFloat(ev, sel("magnification")), Mods: eventMods(ev)})
+			s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: x, Y: y, Scale: 1 + msgFloat(ev, sel("magnification")),
+				Phase: gesturePhase(uint(send(ev, "phase"))), Mods: eventMods(ev)})
+		}),
+		// Two fingers tapped twice: a smart zoom, a gesture of one event.
+		method("smartMagnifyWithEvent:", func(self id, _ objc.SEL, ev id) {
+			s := b().surfaceOf(self)
+			if s == nil {
+				return
+			}
+			x, y := s.location(ev)
+			s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: x, Y: y, Scale: 1, Phase: platform.GestureSmart, Mods: eventMods(ev)})
 		}),
 		method("swipeWithEvent:", func(self id, _ objc.SEL, ev id) {
 			s := b().surfaceOf(self)

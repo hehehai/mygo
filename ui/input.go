@@ -138,7 +138,7 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise, ev.Momentum)
 	case platform.PointerZoom:
 		rt.pointerMove(x, y)
-		rt.zoom(float32(ev.Scale), float32(ev.Rotation), Modifiers(ev.Mods))
+		rt.zoom(float32(ev.Scale), float32(ev.Rotation), GesturePhase(ev.Phase), Modifiers(ev.Mods))
 	case platform.KeyPressed:
 		rt.modsChanged(Modifiers(ev.Mods))
 		rt.holdKey(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey))
@@ -966,14 +966,60 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool)
 }
 
 // zoom gives a pinch to the element under the pointer that handles its
-// input; no element zooms of its own.
-func (rt *engine) zoom(scale, rotation float32, mods Modifiers) {
+// input; no element zooms of its own. A touchpad's pinch whose phases the
+// platform tells is one gesture (zoomGesture).
+func (rt *engine) zoom(scale, rotation float32, phase GesturePhase, mods Modifiers) {
+	if phase != GestureNone {
+		rt.zoomGesture(InputEvent{Kind: InputZoom, Scale: scale, Rotation: rotation, Phase: phase, Mods: mods})
+		return
+	}
 	if scale <= 0 || scale == 1 && rotation == 0 {
 		return
 	}
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
 	rt.chain = chain[:0]
 	rt.deliver(rt.handler(chain), InputEvent{Kind: InputZoom, Scale: scale, Rotation: rotation, Mods: mods})
+}
+
+// zoomGesture gives an event of a touchpad's pinch to the element that
+// took its first event, or at its first (or a smart zoom, a gesture of one
+// event) to the innermost element under the pointer that takes it.
+func (rt *engine) zoomGesture(ev InputEvent) {
+	if ev.Scale <= 0 {
+		ev.Scale = 1
+	}
+	if ev.Phase != GestureBegan && ev.Phase != GestureSmart {
+		if s := rt.states[rt.zoomer]; s != nil && s.input != nil && s.flags&flagDisabled == 0 {
+			rt.deliver(s, ev)
+			if ev.Phase == GestureEnded {
+				rt.zoomer = 0
+			}
+			return
+		}
+		if ev.Phase == GestureEnded {
+			rt.zoomer = 0
+			return
+		}
+		// A pinch whose first event no element took (or that began
+		// before the window showed): the element under the pointer may
+		// take it from here.
+		ev.Phase = GestureBegan
+	}
+	rt.zoomer = 0
+	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
+	rt.chain = chain[:0]
+	for _, id := range chain {
+		s := rt.states[id]
+		if s == nil || s.input == nil || s.flags&flagDisabled != 0 {
+			continue
+		}
+		if rt.deliver(s, ev) {
+			if ev.Phase != GestureSmart {
+				rt.zoomer = id
+			}
+			return
+		}
+	}
 }
 
 // dragTo returns the offset of content whose thumb moved by moved DIPs

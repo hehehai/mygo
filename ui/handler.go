@@ -66,7 +66,42 @@ const (
 	// them as scrolling with Ctrl held, so there a touchpad's scrolling
 	// with Ctrl held comes as InputZoom too, and a mouse wheel's notches
 	// as InputScroll with Ctrl in Mods.
+	//
+	// Where the platform tells where a touchpad's pinch is (macOS), Phase
+	// says it, and the pinch is one gesture: the innermost element under
+	// the pointer that takes its first event (GestureBegan) gets the rest
+	// of it, wherever the pointer goes, as a press's moves follow the
+	// element that took it; one that leaves the first event lets it go
+	// on outwards. A pinch whose first event no element took (it began
+	// over something else, or before the window showed) is offered from
+	// its next event as a first one, to the element then under the
+	// pointer. Its last event (GestureEnded) may have a Scale of 1. A
+	// smart zoom (two fingers tapped twice, which zooms to what is under
+	// the pointer or back, as a double tap in Preview) comes as an
+	// InputZoom of its own, GestureSmart and Scale 1. Where the platform
+	// does not tell (GestureNone), each event goes to the element under
+	// the pointer that handles its input.
 	InputZoom
+)
+
+// GesturePhase is where a touchpad's gesture is (InputEvent.Phase).
+type GesturePhase uint8
+
+// Gesture phases.
+const (
+	// GestureNone is an event of no gesture the platform tells of: a
+	// mouse wheel's, a pinch on a platform that does not tell its phases.
+	GestureNone GesturePhase = iota
+	// GestureBegan is the gesture's first event.
+	GestureBegan
+	// GestureChanged is an event between the first and the last.
+	GestureChanged
+	// GestureEnded is its last: the fingers lifted, or the system
+	// cancelled it.
+	GestureEnded
+	// GestureSmart is a gesture of one event: two fingers tapped twice
+	// (smart zoom), an InputZoom with Scale 1.
+	GestureSmart
 )
 
 // InputEvent is input an element takes as it comes (HandleInput).
@@ -123,6 +158,9 @@ type InputEvent struct {
 	// Scale is what InputZoom zooms by, and Rotation the radians clockwise
 	// two fingers turned, on touch screens.
 	Scale, Rotation float32
+	// Phase is where the touchpad's gesture of an InputZoom is (macOS),
+	// GestureNone where the platform does not tell.
+	Phase GesturePhase
 	// Start and End are the runes InputSelect selects.
 	Start, End int
 	// Time is when the event came, by the clock of the window's frames

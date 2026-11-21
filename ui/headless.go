@@ -1019,6 +1019,48 @@ func (t *Tester) Pinch(x, y, scale float32) {
 	t.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: float64(x), Y: float64(y), Scale: float64(scale)})
 }
 
+// Zoom sends one event of a touchpad's pinch with the pointer at (x, y),
+// of phase, zooming by scale since the last, as macOS tells its phases
+// (InputZoom, InputEvent.Phase).
+func (t *Tester) Zoom(x, y float32, phase GesturePhase, scale float32) {
+	t.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: float64(x), Y: float64(y), Scale: float64(scale),
+		Phase: platform.GesturePhase(phase)})
+}
+
+// PinchGesture pinches a touchpad at (x, y) as macOS tells it: a gesture
+// of one event per step, each zooming by its scale (GestureBegan, then
+// GestureChanged), then the fingers lifted (GestureEnded, scale 1).
+func (t *Tester) PinchGesture(x, y float32, scales ...float32) {
+	for i, s := range scales {
+		phase := GestureChanged
+		if i == 0 {
+			phase = GestureBegan
+		}
+		t.Zoom(x, y, phase, s)
+	}
+	t.Zoom(x, y, GestureEnded, 1)
+}
+
+// SmartZoom taps a touchpad twice with two fingers at (x, y) (smart
+// zoom): one InputZoom of phase GestureSmart.
+func (t *Tester) SmartZoom(x, y float32) {
+	t.Zoom(x, y, GestureSmart, 1)
+}
+
+// ScrollWith scrolls as Scroll does, a touchpad's scrolling, holding the
+// modifier keys mods, as Cmd with two fingers.
+func (t *Tester) ScrollWith(mods Modifiers, x, y, dx, dy float32) {
+	t.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: float64(x), Y: float64(y), DX: float64(dx), DY: float64(dy), Precise: true,
+		Mods: platform.Modifiers(mods)})
+}
+
+// WheelWith scrolls as Wheel does, a notch of a mouse wheel, holding the
+// modifier keys mods, as Cmd with the wheel.
+func (t *Tester) WheelWith(mods Modifiers, x, y, dx, dy float32) {
+	t.send(platform.SurfaceEvent{Kind: platform.PointerScroll, X: float64(x), Y: float64(y), DX: float64(dx), DY: float64(dy),
+		Mods: platform.Modifiers(mods)})
+}
+
 // TouchDown puts the finger id down at (x, y) on the touchscreen, which
 // TouchMove moves and TouchUp lifts, as a window's fingers come to the
 // views that follow them (Element.Touches). It sends only the touch: the
