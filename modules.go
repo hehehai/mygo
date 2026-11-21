@@ -297,6 +297,11 @@ type Display struct {
 	Rotation    int
 	Internal    bool
 	Primary     bool
+	// Notch is the camera housing at the top of a MacBook's built-in
+	// display, in screen coordinates: the part of the menu bar's height
+	// between the areas left and right of it, which nothing can show in.
+	// It is zero on displays without one, and on other platforms.
+	Notch Rectangle
 }
 
 // ScreenModule queries displays.
@@ -322,6 +327,7 @@ func (s *ScreenModule) Displays() []Display {
 				Rotation:    d.Rotation,
 				Internal:    d.Internal,
 				Primary:     d.Primary,
+				Notch:       Rectangle(d.Notch),
 			})
 		}
 		return out

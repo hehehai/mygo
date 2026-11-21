@@ -1394,6 +1394,7 @@ func (screen) Displays() []platform.Display {
 		ID: 1, Label: "Fake", Primary: true, ScaleFactor: 2,
 		Bounds:   platform.Rect{Width: 1440, Height: 900},
 		WorkArea: platform.Rect{Y: 25, Width: 1440, Height: 875},
+		Notch:    platform.Rect{X: 630, Width: 180, Height: 25},
 	}}
 }
 func (screen) CursorPoint() platform.Point { return platform.Point{X: 10, Y: 20} }

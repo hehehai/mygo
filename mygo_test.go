@@ -2062,6 +2062,9 @@ func TestModules(t *testing.T) {
 	if d := Screen.PrimaryDisplay(); d.Label != "Fake" || d.WorkArea.Y != 25 {
 		t.Errorf("primary display = %+v", d)
 	}
+	if d := Screen.PrimaryDisplay(); d.Notch != (Rectangle{X: 630, Width: 180, Height: 25}) {
+		t.Errorf("notch = %+v", d.Notch)
+	}
 	if d := Screen.DisplayNearestPoint(Point{5000, 5000}); d.Label != "Fake" {
 		t.Error("DisplayNearestPoint")
 	}

@@ -323,10 +323,34 @@ func (screen) Displays() []platform.Display {
 			if respondsTo(s, "localizedName") {
 				d.Label = goString(send(s, "localizedName"))
 			}
+			d.Notch = screenNotch(s)
 			out = append(out, d)
 		}
 	})
 	return out
+}
+
+// screenNotch is the camera housing of an NSScreen (macOS 12): the top
+// safe area inset's height between auxiliaryTopLeftArea and
+// auxiliaryTopRightArea; zero without one.
+func screenNotch(s id) platform.Rect {
+	if !respondsTo(s, "auxiliaryTopLeftArea") || !respondsTo(s, "safeAreaInsets") {
+		return platform.Rect{}
+	}
+	// NSEdgeInsets is four doubles (top, left, bottom, right), returned as
+	// an NSRect is.
+	insets := msgRect(s, sel("safeAreaInsets"))
+	top := insets.Origin.X
+	left, right := msgRect(s, sel("auxiliaryTopLeftArea")), msgRect(s, sel("auxiliaryTopRightArea"))
+	if top <= 0 || left.Size.Width <= 0 || right.Size.Width <= 0 {
+		return platform.Rect{}
+	}
+	frame := msgRect(s, sel("frame"))
+	x0, x1 := left.Origin.X+left.Size.Width, right.Origin.X
+	if x1 <= x0 {
+		return platform.Rect{}
+	}
+	return rectFromMac(NSRect{Origin: NSPoint{X: x0, Y: frame.Origin.Y + frame.Size.Height - top}, Size: NSSize{Width: x1 - x0, Height: top}})
 }
 
 func (screen) CursorPoint() platform.Point {

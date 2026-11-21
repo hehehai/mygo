@@ -1312,6 +1312,9 @@ type Display struct {
 	Rotation    int
 	Internal    bool
 	Primary     bool
+	// Notch is the camera housing at the top of the display, in screen
+	// coordinates; zero without one.
+	Notch Rect
 }
 
 // Screen queries monitors.
