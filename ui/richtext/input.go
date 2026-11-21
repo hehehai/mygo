@@ -581,6 +581,9 @@ func (v *view) press(ev ui.InputEvent) bool {
 	}
 	v.pressMods = ev.Mods
 	v.pressLink = ""
+	if ev.Clicks == 1 && v.startResize(ev) {
+		return true
+	}
 	if v.overScrollbar(ev.X) {
 		v.thumb = true
 		top, size := v.thumbBox()
@@ -607,6 +610,14 @@ func (v *view) press(ev ui.InputEvent) bool {
 	v.dragging = true
 	v.hasDesired = false
 	v.dragUnit = min(max(ev.Clicks, 1), 3)
+	if j, ok := v.pictureAt(x, y, i); ok && v.dragUnit == 1 && ev.Mods&ui.Shift == 0 {
+		// A picture pressed is selected alone, as a word processor does:
+		// its corners show their handles.
+		v.selAnchor, v.caret, v.affinity = j, j+1, ui.TextDownstream
+		v.dragStart = [2]int{j, j + 1}
+		v.coalesce = false
+		return true
+	}
 	switch v.dragUnit {
 	case 1:
 		v.moveTo(i, aff, ev.Mods&ui.Shift != 0)
@@ -621,16 +632,34 @@ func (v *view) press(ev ui.InputEvent) bool {
 	return true
 }
 
+// pictureAt returns the picture that (x, y), in the content, is on, of
+// the runes at and before i (where the pointer's position lies).
+func (v *view) pictureAt(x float32, y float64, i int) (int, bool) {
+	for j := i; j >= max(0, i-1); j-- {
+		box, ok := v.imageBox(j)
+		if ok && x >= box.X && x < box.X+box.W && y >= float64(box.Y) && y < float64(box.Y+box.H) {
+			return j, true
+		}
+	}
+	return 0, false
+}
+
 // move handles the pointer moving: a drag extends the selection.
 func (v *view) move(ev ui.InputEvent) bool {
 	if v.thumb {
 		v.dragThumb(ev.Y)
 		return true
 	}
+	if v.resize != nil {
+		v.resizeTo(ev)
+		return true
+	}
 	x, y := v.contentPoint(ev.X, ev.Y)
 	if !v.dragging {
 		cursor := ui.CursorText
-		if _, box := v.taskBox(x, y); box || v.overScrollbar(ev.X) {
+		if k, ok := v.cornerAt(x, y); ok {
+			cursor = cornerCursor(k)
+		} else if _, box := v.taskBox(x, y); box || v.overScrollbar(ev.X) {
 			cursor = ui.CursorDefault
 		} else if v.linkAt(x, y) != "" {
 			cursor = ui.CursorPointer
@@ -678,6 +707,10 @@ func (v *view) move(ev ui.InputEvent) bool {
 func (v *view) release(ev ui.InputEvent) bool {
 	if v.thumb {
 		v.thumb = false
+		return true
+	}
+	if v.resize != nil {
+		v.finishResize()
 		return true
 	}
 	if !v.dragging {

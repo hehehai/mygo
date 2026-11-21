@@ -26,7 +26,7 @@ func coreTabs(c *context, selected *int, labels ...string) *node {
 			}
 			tab.TextColor(t.TextMuted)
 			if on {
-				tab.TextColor(t.Text).FontWeight(600)
+				tab.TextColor(t.Text).FontWeight(t.titleWeight(600))
 			}
 			tab.styleFn = func(tab *node) {
 				if !on && tab.Hovered() {

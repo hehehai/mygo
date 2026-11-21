@@ -157,7 +157,7 @@ func styleButton(c *context, b *node, primary bool) {
 	base, hover, pressed, fg, border := t.Surface, t.SurfaceHover, t.SurfacePressed, t.Text, t.Border
 	switch {
 	case primary && c.emphasized(t):
-		base, hover, pressed, fg, border = t.Accent, t.AccentHover, t.AccentPressed, t.AccentText, Color{}
+		base, hover, pressed, fg, border = t.AccentFill(), t.AccentHover, t.AccentPressed, t.AccentText, Color{}
 	case primary:
 		// As other buttons in a window not drawn as active, as AppKit's
 		// default button: its border inside the padding, so that it is as
@@ -267,7 +267,7 @@ func coreRadio[T comparable](c *context, selected *T, value T, label string) *no
 	row.Children(func() {
 		dot := coreBox(c).Size(t.Space(4), t.Space(4)).Radius(t.Space(2)).Shrink(0)
 		if on {
-			dot.Background(c.accent(t))
+			dot.Background(c.accentFill(t))
 		} else {
 			dot.Background(t.Background).Border(1, t.Border.Mix(t.Text, 0.25))
 		}
@@ -353,13 +353,22 @@ func slider(c *context, value *float64, lo, hi, step float64) *node {
 	}
 	held := s.Animate("held", b2f(s.st.pressedPrimary()), 150*time.Millisecond)
 	fill := c.accent(t)
+	pressed := s.st.pressedPrimary()
 	s.Draw(func(p *Painter, r Rect) {
+		f := frac
+		if s.liveValue != nil && !pressed {
+			// LiveValue: where the value is now.
+			f = fraction(s.liveValue(p, r), lo, hi)
+			if rtl {
+				f = 1 - f
+			}
+		}
 		// As thick as Progress; above the ticks.
 		h := t.Space(1.5)
 		cy := r.Y + t.Space(2.5)
 		track := Rect{r.X, cy - h/2, r.W, h}
 		paintTicks(p, t, r, kw, ticks, cy+kh/2+t.Space(1))
-		x := r.X + kw/2 + (r.W-kw)*frac
+		x := r.X + kw/2 + (r.W-kw)*f
 		k := knobRect(t, x, cy, held)
 		if held > 0 {
 			// The lens lightens what is behind it, under the track.
@@ -687,7 +696,7 @@ func coreModal(c *context, open *bool, fn func()) *node {
 	t := c.theme
 	return coreDialogBase(c, open, func(back, panel *node) {
 		back.Background(RGBA(0, 0, 0, 0.4))
-		panel.Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.Space(2.5)).Background(t.Background).MaxWidth(c.w - t.Space(10)).MaxHeight(c.h - t.Space(10))
+		panel.Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.dialogRadius()).Background(t.Background).MaxWidth(c.w - t.Space(10)).MaxHeight(c.h - t.Space(10))
 		panel.Shadow(0, 10, 30, 0, RGBA(0, 0, 0, 0.3))
 		fn()
 	})
@@ -710,7 +719,7 @@ func corePopover(c *context, anchor *node, open *bool, fn func()) *node {
 // stylePanel gives the panel of a popup the theme's look.
 func stylePanel(c *context, panel *node) {
 	t := c.theme
-	panel.Margin(t.Space(1), 0, 0, 0).Padding(t.Space(1)).Radius(t.Radius+2).Background(t.Background).Border(1, t.Border)
+	panel.Margin(t.Space(1), 0, 0, 0).Padding(t.Space(1)).Radius(t.popupRadius()).Background(t.Background).Border(1, t.Border)
 	panel.Shadow(0, 6, 20, 0, RGBA(0, 0, 0, 0.18))
 }
 
@@ -730,10 +739,10 @@ func coreSelect(c *context, selected *string, options []string) *node {
 		// Options past the room the window has scroll.
 		panel.flags |= flagScrollY | flagHover
 		for _, opt := range options {
-			item := sel.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius)
+			item := sel.Item(opt).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.popupOptionRadius())
 			switch {
 			case item.Highlighted():
-				item.Background(t.Accent).TextColor(t.AccentText)
+				item.Background(t.AccentFill()).TextColor(t.AccentText)
 			case opt == *selected:
 				item.Background(t.Surface)
 			}

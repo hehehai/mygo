@@ -569,6 +569,31 @@ func (e *node) SelectedTexts() []SelectedText {
 	return e.c.rt.selectedTexts(e.id)
 }
 
+// TextClicked reports a click on the text of a Selectable container (a
+// press let go of without selecting anything) since the last frame, with
+// the paragraph it fell on and the rune the caret went to (Start and End
+// both): as a reader's view opens the passage marked there.
+func (e *node) TextClicked() (SelectedText, bool) {
+	rt := e.c.rt
+	t := rt.selection
+	if t.scope != e.id || t.anchor != t.caret || t.unit > 1 || rt.textPointIndex(t.caret) < 0 {
+		return SelectedText{}, false
+	}
+	s := rt.states[t.caret.id]
+	if s == nil || s.clicks == 0 || s.editor == nil {
+		return SelectedText{}, false
+	}
+	return SelectedText{ID: s.id, Text: s.editor.source, Start: t.caret.at, End: t.caret.at}, true
+}
+
+// TextSelecting reports whether the pointer is selecting text of a
+// Selectable container (pressed on it and not let go of yet): a view
+// shows what it offers for a selection once it is made.
+func (e *node) TextSelecting() bool {
+	t := e.c.rt.selection
+	return t.scope == e.id && t.dragging
+}
+
 // CopyData sets what Copy, its shortcut and the context menu's put on
 // the clipboard for the selection of a Selectable container: fn gets its
 // parts, as SelectedTexts returns them, and returns the data, as a

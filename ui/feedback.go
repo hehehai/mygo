@@ -73,7 +73,7 @@ func coreCheckboxGroup(c *context, label string, fn func()) *node {
 func paintCheckbox(c *context, row, box *node, state int8) {
 	t := c.theme
 	if state > 1 {
-		box.Background(c.accent(t))
+		box.Background(c.accentFill(t))
 	} else {
 		box.Background(t.Background).Border(1, t.Border.Mix(t.Text, 0.25))
 	}
@@ -186,12 +186,12 @@ func coreAlertDialog(c *context, open *bool, title, message string, buttons ...s
 			// in a narrower window the buttons wrap, and a label too long for
 			// it ends in an ellipsis.
 			room := c.w - t.Space(10)
-			panel := coreColumn(c).MinWidth(min(t.Space(75), room)).MaxWidth(room).Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.Space(2.5)).Background(t.Background).Role(RoleAlertDialog)
+			panel := coreColumn(c).MinWidth(min(t.Space(75), room)).MaxWidth(room).Padding(t.Space(5)).Gap(t.Space(3)).Radius(t.dialogRadius()).Background(t.Background).Role(RoleAlertDialog)
 			panel.Label(title)
 			panel.description = message
 			panel.Shadow(0, 10, 30, 0, RGBA(0, 0, 0, 0.3))
 			panel.Children(func() {
-				coreText(c, title).Bold().FontSize(t.FontSize + 1).Width(0).MinWidthPercent(100)
+				coreText(c, title).FontWeight(t.titleWeight(700)).FontSize(t.FontSize + 1).Width(0).MinWidthPercent(100)
 				if message != "" {
 					coreText(c, message).TextColor(t.TextMuted).Width(0).MinWidthPercent(100)
 				}

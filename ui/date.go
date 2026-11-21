@@ -219,7 +219,7 @@ func calendarGrid(c *context, grid *node, date, cursor *time.Time, moveChooses b
 					moveMonth(-1)
 				}
 			})
-			coreText(c, title).Bold().Grow(1).TextAlign(Center)
+			coreText(c, title).FontWeight(t.titleWeight(700)).Grow(1).TextAlign(Center)
 			next := coreButton(c, "").Padding(t.Space(1), t.Space(2.5)).Label(c.texts().NextMonth())
 			next.Children(func() { monthChevron(c, false) })
 			next.flags |= flagClickable
@@ -264,7 +264,7 @@ func calendarGrid(c *context, grid *node, date, cursor *time.Time, moveChooses b
 					}
 					switch {
 					case chosen:
-						cell.Background(c.accent(t))
+						cell.Background(c.accentFill(t))
 						fg = t.AccentText
 					case atCursor:
 						cell.Background(t.SurfaceHover)

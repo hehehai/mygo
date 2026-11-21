@@ -2437,6 +2437,21 @@ func Sidebar(c *Context, selected *string, fn func()) Element {
 	return wrapElement(_e)
 }
 
+// SidebarEntry adds an item to a Sidebar without building it: an item of
+// a long section out of view, which the app builds only near what the
+// sidebar shows, as a List builds its rows, leaving the room the items
+// would take. Up, Down, Home, End and typing the first letters of label
+// choose it as they choose the items built, in the order they come;
+// build the item chosen (SidebarItem), which the view may scroll to.
+// Outside a Sidebar it does nothing.
+func SidebarEntry(c *Context, id string, label string) {
+	_ctx := c.build()
+	if _ctx == nil {
+		return
+	}
+	coreSidebarEntry(_ctx, id, label)
+}
+
 // SidebarItem creates an item of a Sidebar choosing id, showing label
 // after icon, nil for none. Add to it with Children, as a Badge.
 func SidebarItem(c *Context, id string, icon *SVG, label string) Element {
@@ -5259,6 +5274,34 @@ func (_handle Element) ErrorMessage(msg Element) Element {
 	return wrapElement(_node.ErrorMessage(msg.nodeFor(_ctx.rt)))
 }
 
+// ExpandAsked reports whether assistive technology asked to open (open
+// true) or to close an Expandable element since the last frame; asked
+// is false when it did not.
+func (_handle Element) ExpandAsked() (bool, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return false, false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.ExpandAsked()
+}
+
+// Expandable makes the element one that shows or hides others below it,
+// as an item of a tree with children (a folder in a sidebar built with
+// SidebarItem): assistive technology reads it as expanded or collapsed
+// (open), and may ask to open or close it, which ExpandAsked reports, as
+// it does for a SidebarSection and the items of a Tree.
+func (_handle Element) Expandable(open bool) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Expandable(open))
+}
+
 // Expanded tells assistive technology whether what the element opens
 // shows, as the popup of a button or the section below a header.
 func (_handle Element) Expanded(open bool) Element {
@@ -5269,6 +5312,21 @@ func (_handle Element) Expanded(open bool) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Expanded(open))
+}
+
+// ExtendsChoice makes a click on the sidebar item with Command or Shift
+// held leave the sidebar's choice as it is, for the app to add the item
+// to a choice of several of its own, as Finder's ⌘-click and ⇧-click
+// extend a selection: Clicked and ClickModifiers report the click. A click
+// without them chooses the item as before.
+func (_handle Element) ExtendsChoice() Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.ExtendsChoice())
 }
 
 // FileDragAt is FileDragOver with where the files are, in the element's
@@ -6327,6 +6385,25 @@ func (_handle Element) Lines(min int, max int) Element {
 	return wrapElement(_node.Lines(min, max))
 }
 
+// LiveValue makes a Slider (or StepSlider) paint the value fn returns as
+// it paints (given the slider's box, in DIPs relative to the window, as
+// Draw is), rather than *value as the view was built, while it is not
+// pressed: a value that moves with the frame's time (Painter.Now) between
+// builds, as a player's position, which then costs a frame only its
+// painting. fn may ask for the next frame (Painter.AnimationFrame, After)
+// while the value moves; it runs only while the slider is in view.
+// *value stays what dragging and the keys set and assistive technology
+// reads. A SliderBase draws itself: its Draw may call fn.
+func (_handle Element) LiveValue(fn func(p *Painter, r Rect) float64) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.LiveValue(fn))
+}
+
 // LocalToWindow maps a point in the previous frame's border box to the window.
 func (_handle Element) LocalToWindow(x float32, y float32) (float32, float32) {
 	_node := _handle.node()
@@ -7362,6 +7439,24 @@ func (_handle Element) PressedPointer() (PointerType, float32, bool) {
 	_ctx := _node.c
 	_ = _ctx
 	return _node.PressedPointer()
+}
+
+// PressedWithin reports whether the pointer is held down now on the
+// element, on an element inside it, or in a popover attached to one of
+// them, wherever the pointer has moved since: a slider of a bar dragged
+// off the bar keeps it pressed within the bar, which may stay shown till
+// it is let go of. PressedInside tells that a press went down there since
+// the last frame; PressedWithin that one is held there, as FocusWithin
+// tells where the focus is. Unlike Pressed it does not make the element a
+// control, and a press on a scroll bar is not one.
+func (_handle Element) PressedWithin() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.PressedWithin()
 }
 
 // Pretty keeps the last line of each paragraph of the element's text from
@@ -8448,6 +8543,20 @@ func (_handle Element) TextCaret(r Rect) Element {
 	return wrapElement(_node.TextCaret(r))
 }
 
+// TextClicked reports a click on the text of a Selectable container (a
+// press let go of without selecting anything) since the last frame, with
+// the paragraph it fell on and the rune the caret went to (Start and End
+// both): as a reader's view opens the passage marked there.
+func (_handle Element) TextClicked() (SelectedText, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return *new(SelectedText), false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.TextClicked()
+}
+
 // TextColor sets the color of text.
 func (_handle Element) TextColor(c Color) Element {
 	_node := _handle.node()
@@ -8474,6 +8583,19 @@ func (_handle Element) TextRanges(ranges ...TextRange) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.TextRanges(ranges...))
+}
+
+// TextSelecting reports whether the pointer is selecting text of a
+// Selectable container (pressed on it and not let go of yet): a view
+// shows what it offers for a selection once it is made.
+func (_handle Element) TextSelecting() bool {
+	_node := _handle.node()
+	if _node == nil {
+		return false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.TextSelecting()
 }
 
 // TextSelection returns the selection of a text input as offsets in runes

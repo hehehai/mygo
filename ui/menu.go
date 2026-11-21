@@ -574,6 +574,23 @@ func (it *MenuItem) Highlighted() bool {
 	return false
 }
 
+// Command makes the item do the editing command name on the text the
+// menu opened on, as EditItems' items do, rather than report its choice
+// to Chosen: "cut", "copy", "paste", "pasteAndMatchStyle", "delete",
+// "selectAll", "undo", "redo", or one of the Format menu. An app labels
+// and orders the text's editing items its own way with it, and adds
+// those EditItems leaves out, as Paste and Match Style; the commands of
+// an element of HandleTextInput (the rich text editor) come to it as
+// InputCommand, as from EditItems' items. Disabled is the app's to set,
+// as the text says what it can do. On a menu that opened on no text the
+// command goes to the element whose menu it is.
+func (it *MenuItem) Command(name string) *MenuItem {
+	if r := it.run; r.collect && it.seq >= 1 && it.seq <= len(r.commands) {
+		r.commands[it.seq-1] = name
+	}
+	return it
+}
+
 // Chosen reports whether the item was chosen, in the frame after the user
 // chose it: the item with the ID of the one chosen, when it had one (ID),
 // else the one at its place with its label.

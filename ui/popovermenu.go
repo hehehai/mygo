@@ -1124,7 +1124,7 @@ func (rt *engine) drawnMenuBuilt(e *node, d *drawnMenu, m *Menu) *platform.MenuI
 	refs := map[uint64]menuRef{}
 	style := func(panel *node, width float32) {
 		panel.widget = "PopoverMenu"
-		panel.MinWidth(t.Space(45)).Padding(t.Space(1)).Radius(t.Radius+2).Background(t.Background).Border(1, t.Border)
+		panel.MinWidth(t.Space(45)).Padding(t.Space(1)).Radius(t.popupRadius()).Background(t.Background).Border(1, t.Border)
 		panel.Shadow(0, 6, 20, 0, RGBA(0, 0, 0, 0.18))
 		if width > 0 {
 			panel.MaxWidth(max(width, t.Space(45)))
@@ -1286,7 +1286,7 @@ func (m *menuParts) drawnItem(d *drawnMenu, it *platform.MenuItem, mi *MenuItem,
 	default:
 		row = m.Item()
 	}
-	row.AlignItems(Center).Gap(t.Space(2)).Padding(t.Space(1.5), t.Space(2)).Radius(t.Radius).Shrink(0)
+	row.AlignItems(Center).Gap(t.Space(2)).Padding(t.Space(1.5), t.Space(2)).Radius(t.popupOptionRadius()).Shrink(0)
 	row.Label(it.Label).Disabled(!it.Enabled)
 	// Assistive technology reads the subtitle, the trailing text and the
 	// tooltip, if any, as the item's description, and the shortcut as its
@@ -1310,10 +1310,10 @@ func (m *menuParts) drawnItem(d *drawnMenu, it *platform.MenuItem, mi *MenuItem,
 		row.Background(t.SurfaceHover).TextColor(color)
 	case row.highlighted:
 		color, muted = t.AccentText, t.AccentText
-		if mi.danger && legibleOn(t.Danger, t.Accent, t.AccentText) {
+		if mi.danger && legibleOn(t.Danger, t.AccentFill(), t.AccentText) {
 			color = t.Danger
 		}
-		row.Background(t.Accent).TextColor(color)
+		row.Background(t.AccentFill()).TextColor(color)
 	case mi.danger:
 		row.TextColor(color)
 	}

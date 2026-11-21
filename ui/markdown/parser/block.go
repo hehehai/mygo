@@ -30,6 +30,8 @@ type blockState struct {
 	fenceLength int32
 	fenceOffset int32
 	columns     int32
+	// pads counts a table's cells added to rows shorter than its header.
+	pads int32
 
 	open          bool
 	lastLineBlank bool
@@ -1405,7 +1407,7 @@ func (p *blockParser) tableStart(container *int) bool {
 	t.parse.columns = int32(len(aligns))
 	row := p.addChild(table, TableRow, int(h.start))
 	d.blocks[row].Header = true
-	p.addCells(row, int(h.start), header, cells, len(aligns))
+	p.addCells(table, row, int(h.start), header, cells)
 	p.finalize(row)
 	d.blocks[table].End = p.lineStart + len(p.ln)
 	p.advanceOffset(len(p.ln)-p.offset, false)
@@ -1421,14 +1423,27 @@ func (p *blockParser) tableRow(t int) {
 	line := p.ln[p.firstNonspace:]
 	cells := splitRow(line)
 	row := p.addChild(t, TableRow, start)
-	p.addCells(row, start, line, cells, int(p.d.blocks[t].parse.columns))
+	p.addCells(t, row, start, line, cells)
 	p.finalize(row)
 	p.advanceOffset(len(p.ln)-p.offset, false)
 }
 
-// addCells adds the cells of a row, as many as the table has columns,
-// those missing empty.
-func (p *blockParser) addCells(row, base int, line string, cells [][2]int, columns int) {
+// addCells adds the cells of a row of table t, as many as the table has
+// columns, those missing empty. The empty cells a table adds are at most
+// its bytes, as cmark-gfm limits them: else a header of many columns
+// over short rows would make blocks quadratic in the source (8,192
+// columns and 2,000 rows of "|" — 65 KB — made 16 million cells); past
+// that a short row keeps only its own cells.
+func (p *blockParser) addCells(t, row, base int, line string, cells [][2]int) {
+	tb := &p.d.blocks[t]
+	columns := int(tb.parse.columns)
+	if missing := columns - len(cells); missing > 0 {
+		if int(tb.parse.pads)+missing > base+len(line)-tb.Start {
+			columns = len(cells)
+		} else {
+			tb.parse.pads += int32(missing)
+		}
+	}
 	for k := 0; k < columns; k++ {
 		at := base + len(line)
 		if k < len(cells) {

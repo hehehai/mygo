@@ -87,7 +87,7 @@ func splitButton(c *context, label string, primary bool) splitButtonParts {
 	line.Background(t.Border)
 	ink := t.TextMuted
 	if emphasized {
-		line.Background(t.Accent.Mix(t.AccentText, 0.35))
+		line.Background(t.AccentFill().Mix(t.AccentText, 0.35))
 		ink = t.AccentText
 	}
 	arrow.Label(c.texts().MoreOptions()).PaddingX(t.Space(2))

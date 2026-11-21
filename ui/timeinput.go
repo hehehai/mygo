@@ -95,7 +95,7 @@ func coreTimeInput(c *context, tm *time.Time) *node {
 				seg.accValue = text
 			}
 			if seg.Focused() {
-				seg.Background(t.Accent).TextColor(t.AccentText)
+				seg.Background(t.AccentFill()).TextColor(t.AccentText)
 			}
 			seg.Children(func() { coreText(c, text).FontFeatures("tnum") })
 			segs[k] = seg

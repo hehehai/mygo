@@ -232,6 +232,29 @@ func (e *node) Expanded(open bool) *node {
 	return e
 }
 
+// Expandable makes the element one that shows or hides others below it,
+// as an item of a tree with children (a folder in a sidebar built with
+// SidebarItem): assistive technology reads it as expanded or collapsed
+// (open), and may ask to open or close it, which ExpandAsked reports, as
+// it does for a SidebarSection and the items of a Tree.
+func (e *node) Expandable(open bool) *node {
+	e.expandable, e.expanded = true, open
+	return e
+}
+
+// ExpandAsked reports whether assistive technology asked to open (open
+// true) or to close an Expandable element since the last frame; asked
+// is false when it did not.
+func (e *node) ExpandAsked() (open, asked bool) {
+	if !e.hasState() || e.st.expand == 0 {
+		return false, false
+	}
+	open = e.st.expand > 0
+	e.st.expand = 0
+	e.c.rt.consumed = true
+	return open, true
+}
+
 // Busy tells assistive technology whether the element's content is about
 // to change, as a region loading, or one updated in several steps:
 // screen readers wait until it is no longer busy to read what changed in

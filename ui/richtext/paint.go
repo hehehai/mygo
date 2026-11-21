@@ -10,6 +10,12 @@ import (
 // paint lays out the paragraphs in view of the box r, and paints them:
 // their decorations, the selection, their text, the markers of lists, the
 // composition, the caret and the scroll bar.
+//
+// All of it stays in the box (inside a styled editor's border and
+// corners): an element's Clip clips its children, not what its own Draw
+// paints, and the paragraph at the top of the view starts above it once
+// scrolled, the last one ends below it. The corner handles of a picture
+// selected may reach half their size past it.
 func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	v.rect = r
 	w, h := max(r.W-2*v.padX, 1), max(r.H-2*v.padY, 1)
@@ -23,6 +29,17 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 	}
 	v.layout(w, h)
 	ox, oy := r.X+v.padX, r.Y+v.padY
+	in := v.clipInset
+	p.Clip(ui.Rect{X: r.X + in, Y: r.Y + in, W: max(r.W-2*in, 0), H: max(r.H-2*in, 0)}, v.clipRadius, func() { v.paintText(p, r, ox, oy, w, h) })
+	if v.focused && !v.opts.ReadOnly {
+		const g = handleSize / 2
+		p.Clip(ui.Rect{X: r.X - g, Y: r.Y - g, W: r.W + 2*g, H: r.H + 2*g}, 0, func() { v.paintHandles(p, ox, oy, v.scroll) })
+	}
+	v.moved()
+}
+
+// paintText paints the paragraphs in view, the caret and the scroll bar.
+func (v *view) paintText(p *ui.Painter, r ui.Rect, ox, oy, w, h float32) {
 	look := &v.look
 	if v.shown.Len() == 0 && v.compose == "" && v.opts.Placeholder != "" {
 		// where the text would start: past a list's marker, a task's box or a quote's bar, not under them
@@ -92,7 +109,6 @@ func (v *view) paint(p *ui.Painter, r ui.Rect) {
 		bar.Box.X, bar.Box.Y = r.X, r.Y
 		p.Scrollbar(bar, ui.ScrollbarState{Hovered: v.inView, Dragging: v.thumb})
 	}
-	v.moved()
 }
 
 // paintBlock paints what a paragraph of style st shows behind its text:
@@ -296,6 +312,10 @@ func (v *view) paintAttachments(p *ui.Painter, i int, pv *paraView, x, y float32
 		}
 		at := v.shown.AttributesAt(v.global(i, l)).Attachment
 		r := ui.Rect{X: x + o.Rect.X, Y: y + o.Rect.Y, W: o.Rect.W, H: o.Rect.H}
+		g := v.global(i, l)
+		if v.resize != nil && v.resize.i == g {
+			r.W, r.H = v.resize.w, v.resize.h
+		}
 		switch {
 		case at == nil:
 		case at.Draw != nil:

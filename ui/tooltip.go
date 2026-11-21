@@ -127,7 +127,7 @@ func (e *node) Tooltip(s string) *node {
 	t := c.theme
 	fill, text := t.inverse()
 	tooltipBase(c, e, func(tip *node) {
-		tip.MaxWidth(t.Space(80)).Padding(t.Space(1.25), t.Space(2)).Radius(t.Space(1.25)).
+		tip.MaxWidth(t.Space(80)).Padding(t.Space(1.25), t.Space(2)).Radius(t.tooltipRadius()).
 			Background(fill).TextColor(text).FontSize(t.FontSize - 1)
 		tip.Shadow(0, 2, 8, 0, RGBA(0, 0, 0, 0.2))
 		tip.Children(func() { coreText(c, s) })

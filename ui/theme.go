@@ -27,7 +27,8 @@ type Theme struct {
 	Text      Color
 	TextMuted Color
 	// Accent colors primary buttons, checked controls and focus rings;
-	// AccentText is text on it.
+	// AccentText is text on it. Where Accent is too light for AccentText
+	// to read on, SetAccentFill gives what carries it a darker fill.
 	Accent        Color
 	AccentHover   Color
 	AccentPressed Color
@@ -73,6 +74,20 @@ type Theme struct {
 	ScrollbarStyle ScrollbarStyle
 	// Radius rounds the corners of controls.
 	Radius float32
+	// DialogRadius rounds the corners of dialogs: Modal's and
+	// AlertDialog's panels (0 is 2.5 units of Spacing).
+	DialogRadius float32
+	// PopupRadius rounds the panels that drop from a control: Popover's,
+	// PopoverMenu's, the lists of Select, Combobox and Autocomplete,
+	// DatePicker's and ColorPicker's panels (0 is Radius+2). Set, the
+	// options and items in those lists are rounded with it less the
+	// panels' padding, concentric with the panel (at least 4); 0 leaves
+	// them at Radius.
+	PopupRadius float32
+	// ToastRadius rounds the toasts the view does not build itself (0 is
+	// 2 units of Spacing); TooltipRadius tooltips (0 is 1.25 units).
+	ToastRadius   float32
+	TooltipRadius float32
 	// Spacing is the unit of the room widgets leave inside and between
 	// their parts: their paddings and gaps, and the sizes of check boxes,
 	// switches, sliders and the rows of tables and trees, are multiples
@@ -81,6 +96,14 @@ type Theme struct {
 	// FontSize is the size of text, Font its family ("" is the system's).
 	FontSize float32
 	Font     string
+	// TitleWeight is the weight of the titles widgets draw: a
+	// SidebarSection's, a Table's column headers and header rows, an
+	// AlertDialog's, a DatePicker's month, a toast's title (over its
+	// description) and action, a chosen tab's, a fieldset's legend. 0
+	// keeps theirs (600; an alert's and a month's 700); 400 draws them in
+	// the regular weight, as for an app whose type sets titles apart by
+	// size and colour alone.
+	TitleWeight int
 	// TooltipDelay is how long the pointer rests on an element before its
 	// tooltip shows (Tooltip, TooltipBase): 0 is 0.6 seconds, and a
 	// negative delay shows it at once. Within two thirds of it after
@@ -90,6 +113,34 @@ type Theme struct {
 
 	// followed is what WithPreferences changed, nil where it has not.
 	followed *followedTheme
+
+	// accentFill fills what carries AccentText while Accent is
+	// accentFillOf (SetAccentFill).
+	accentFill, accentFillOf Color
+}
+
+// SetAccentFill makes fill the face of what carries AccentText on the
+// accent — the highlighted option of a Select, Combobox or PopoverMenu,
+// a chosen row of a list, table or sidebar, a primary button, a checked
+// box or radio, a chosen day or time field, the count of rows dragged —
+// while Accent stays the colour of rings, progress, sliders, switches,
+// tabs and links: a mid-tone accent such as teal, on which white text
+// falls short of 4.5:1, gets a slightly darker fill white reads on. Set
+// Accent first: a copy of the theme given another Accent (a section of
+// the view recoloured, or the desktop's accent by WithPreferences) fills
+// with that Accent again. AccentHover and AccentPressed are a primary
+// button's under the pointer and pressed: derive them from fill. In a
+// window not drawn as active the fill fades as the accent does
+// (InactiveAccent).
+func (t *Theme) SetAccentFill(fill Color) { t.accentFill, t.accentFillOf = fill, t.Accent }
+
+// AccentFill is the face of what carries AccentText: SetAccentFill's
+// fill while Accent is the one it was set for, else Accent.
+func (t *Theme) AccentFill() Color {
+	if t.accentFill.A > 0 && t.accentFillOf == t.Accent {
+		return t.accentFill
+	}
+	return t.Accent
 }
 
 // followedTheme is a theme before and after following the desktop's
@@ -107,6 +158,39 @@ func (t *Theme) Space(n float32) float32 {
 		s = 4
 	}
 	return n * s
+}
+
+// dialogRadius, popupRadius, toastRadius and tooltipRadius are the
+// corners of dialogs, popups, toasts and tooltips: the theme's, or the
+// defaults.
+func (t *Theme) dialogRadius() float32  { return orRadius(t.DialogRadius, t.Space(2.5)) }
+func (t *Theme) popupRadius() float32   { return orRadius(t.PopupRadius, t.Radius+2) }
+func (t *Theme) toastRadius() float32   { return orRadius(t.ToastRadius, t.Space(2)) }
+func (t *Theme) tooltipRadius() float32 { return orRadius(t.TooltipRadius, t.Space(1.25)) }
+
+// popupOptionRadius rounds an option in a popup's list (padded by one
+// unit): concentric with the panel when PopupRadius is set, else Radius.
+func (t *Theme) popupOptionRadius() float32 {
+	if t.PopupRadius <= 0 {
+		return t.Radius
+	}
+	return max(t.PopupRadius-t.Space(1), 4)
+}
+
+// titleWeight is the weight of a widget's title: the theme's
+// TitleWeight, or def.
+func (t *Theme) titleWeight(def int) int {
+	if t.TitleWeight > 0 {
+		return t.TitleWeight
+	}
+	return def
+}
+
+func orRadius(r, def float32) float32 {
+	if r > 0 {
+		return r
+	}
+	return def
 }
 
 // inactiveAccent returns what the accent fades to in a window that is not

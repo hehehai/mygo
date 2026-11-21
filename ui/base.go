@@ -209,6 +209,20 @@ func (e *node) Step(step float64) *node {
 	return e
 }
 
+// LiveValue makes a Slider (or StepSlider) paint the value fn returns as
+// it paints (given the slider's box, in DIPs relative to the window, as
+// Draw is), rather than *value as the view was built, while it is not
+// pressed: a value that moves with the frame's time (Painter.Now) between
+// builds, as a player's position, which then costs a frame only its
+// painting. fn may ask for the next frame (Painter.AnimationFrame, After)
+// while the value moves; it runs only while the slider is in view.
+// *value stays what dragging and the keys set and assistive technology
+// reads. A SliderBase draws itself: its Draw may call fn.
+func (e *node) LiveValue(fn func(p *Painter, r Rect) float64) *node {
+	e.liveValue = fn
+	return e
+}
+
 // Vertical makes a SliderBase go up, from lo at the bottom of its content
 // box to hi at the top, and tells assistive technology so. Pad it by half
 // the thumb's height, rather than its width. Slider, drawn across, stays

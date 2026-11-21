@@ -3,6 +3,7 @@ package richtext
 import (
 	"crypto/rand"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,10 +203,29 @@ func (v *view) copySelection() {
 	v.services.WriteClipboardData(clipboardData(v.shown.Slice(a, z)))
 }
 
+// pasteHook asks Options.OnPaste about a clipboard with files or a
+// picture; true: it took the paste.
+func (v *view) pasteHook() bool {
+	offered := v.services.ClipboardFormats()
+	if !slices.ContainsFunc(offered, func(f transfer.Format) bool {
+		return f == transfer.FileList || f == transfer.URIList || f == transfer.PNG
+	}) {
+		return false
+	}
+	clip := v.services.ReadClipboardData(transfer.FileList, transfer.URIList, transfer.PNG, transfer.HTML, transfer.Text)
+	if files, err := clip.Files(); (err != nil || len(files) == 0) && !slices.Contains(clip.Formats(), transfer.PNG) {
+		return false // links, not files
+	}
+	return v.opts.OnPaste(clip, offered)
+}
+
 // paste replaces the selection with what the clipboard holds: the richest
 // format the editor reads, or its plain text in the typing attributes when
 // matching the style.
 func (v *view) paste(matchStyle bool) {
+	if !matchStyle && v.opts.OnPaste != nil && v.pasteHook() {
+		return
+	}
 	var t Text
 	ok := false
 	if !matchStyle {

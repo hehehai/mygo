@@ -527,6 +527,15 @@ func (c *context) accent(t *Theme) Color {
 	return t.inactiveAccent()
 }
 
+// accentFill is c.accent for what carries AccentText: the theme's
+// AccentFill in a window drawn as active, else what the accent fades to.
+func (c *context) accentFill(t *Theme) Color {
+	if c.emphasized(t) {
+		return t.AccentFill()
+	}
+	return t.inactiveAccent()
+}
+
 // Now returns the time the frame started, for animations.
 func (c *context) Now() time.Time { return c.now }
 

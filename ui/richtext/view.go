@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/internal/l10n"
 	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/internal/rope"
+	"github.com/egoist/mygo/transfer"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -36,6 +37,17 @@ type EditorOptions struct {
 	// link in a popover and sets it with Document.SetLink. Without it,
 	// ⌘K links a selected URL to itself.
 	OnLinkCommand func()
+	// OnPaste is asked first when files or a picture are pasted (⌘V,
+	// Ctrl+V, the Edit menu; not Paste and Match Style), as a mail
+	// composer puts a picture in the text and attaches files: clip holds
+	// the clipboard's transfer.FileList and transfer.PNG (a picture of
+	// any system format comes as PNG), and its HTML and text when it has
+	// them (a browser's Copy Image: a picture and an <img> without text;
+	// a web page's copy: HTML with words, which can still paste as rich
+	// text), offered every format it has. It returns true when it took the paste, and the editor does
+	// nothing more; false pastes as without it. A clipboard with neither
+	// files nor a picture is pasted without asking.
+	OnPaste func(clip transfer.Data, offered []transfer.Format) bool
 	// TagStyle styles the runs that carry a Tag, as an app shows mentions
 	// or comments.
 	TagStyle func(tag string, s *ui.Span)
@@ -145,6 +157,9 @@ type view struct {
 	laidLook   lookKey
 	padX, padY float32
 	rect       ui.Rect
+	// clipInset and clipRadius are the box its painting stays in: inside
+	// a styled editor's border and corners.
+	clipInset, clipRadius float32
 	// clip is the part of the element the painter's clip showed in the
 	// last paint, from its top, while clipped is true: an editor as tall
 	// as its text, in a scroll container, shows a window of it.
@@ -178,8 +193,10 @@ type view struct {
 	coalesce bool
 	// The pointer: a drag selecting by runes, words or paragraphs, from
 	// where it started; a scroll bar's thumb held; a link pressed.
-	dragging   bool
-	dragUnit   int
+	dragging bool
+	dragUnit int
+	// resize is the drag of a picture's corner, nil when none.
+	resize     *imageResize
 	dragStart  [2]int
 	pressMods  ui.Modifiers
 	pressLink  string
@@ -354,8 +371,10 @@ func (v *view) setLook(t *ui.Theme, styled bool) {
 	}
 	if styled {
 		v.padX, v.padY = th.Padding[0], th.Padding[1]
+		v.clipInset, v.clipRadius = 1, max(t.Radius-1, 0)
 	} else {
 		v.padX, v.padY = 0, 0
+		v.clipInset, v.clipRadius = 0, 0
 	}
 }
 

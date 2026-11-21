@@ -114,3 +114,34 @@ func TestLinearTime(t *testing.T) {
 		checkLinear(t, c.name, c.ext, c.src)
 	}
 }
+
+// TestTablePaddingBounded checks that rows shorter than a wide header do
+// not get a cell for each column each: the empty cells a table adds are
+// at most its bytes (a 9 KB table of 2,048 columns and 512 rows of "|a|" made a
+// million cells).
+func TestTablePaddingBounded(t *testing.T) {
+	const cols, rows = 2048, 512
+	src := "|" + strings.Repeat("a|", cols) + "\n|" + strings.Repeat("-|", cols) + "\n" + strings.Repeat("|a|\n", rows)
+	_, bytes := work(src, Default, true)
+	if bytes > 48<<20 {
+		t.Errorf("a %d KB table allocated %d MB", len(src)>>10, bytes>>20)
+	}
+	if testing.Verbose() {
+		t.Logf("a %d KB table allocated %d KB", len(src)>>10, bytes>>10)
+	}
+	d := New(Default)
+	d.Set("| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |\n")
+	var cells []int
+	for i := 0; i < d.Len(); i++ {
+		if d.Block(i).Kind == TableRow {
+			n := 0
+			for c := i + 1; c < d.Block(i).Next; c = d.Block(c).Next {
+				n++
+			}
+			cells = append(cells, n)
+		}
+	}
+	if len(cells) != 3 || cells[0] != 3 || cells[1] != 3 || cells[2] != 3 {
+		t.Errorf("cells a row = %v, want [3 3 3]", cells)
+	}
+}

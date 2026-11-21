@@ -279,7 +279,7 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 				at := k == cur && *s.cursor() == c.row.i
 				box.checked = 1 + int8(b2f(on))
 				style := s.CellsStyle
-				bg, fg := c.accent(t), t.AccentText
+				bg, fg := c.accentFill(t), t.AccentText
 				if style.Cell != Transparent {
 					bg = style.Cell
 				}
@@ -324,7 +324,7 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 				col := &columns[j]
 				// The header is named by its title, which needs no node
 				// of its own beside it.
-				coreText(c, col.Title).SingleLine().FontWeight(600).TextColor(t.TextMuted).Role(RoleNone)
+				coreText(c, col.Title).SingleLine().FontWeight(t.titleWeight(600)).TextColor(t.TextMuted).Role(RoleNone)
 				if at, descending := s.sortPlace(col); at >= 0 {
 					place := 0
 					if s.SortBy != nil && len(*s.SortBy) > 1 {
@@ -358,7 +358,7 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 			// The list's element holding the row is the row.
 			row.Role(RoleNone)
 			if s.Header != nil && s.Header(i) {
-				row.Padding(cellPadY, t.Space(2.5)).AlignItems(Center).Background(t.Surface).FontWeight(600)
+				row.Padding(cellPadY, t.Space(2.5)).AlignItems(Center).Background(t.Surface).FontWeight(t.titleWeight(600))
 				row.Children(func() { cell(i, 0) })
 				return
 			}
@@ -730,6 +730,6 @@ func (e *node) Selected(on bool) *node {
 	}
 	t := e.theme()
 	e.checked = 2
-	e.Background(e.c.accent(t)).TextColor(t.AccentText)
+	e.Background(e.c.accentFill(t)).TextColor(t.AccentText)
 	return e
 }
