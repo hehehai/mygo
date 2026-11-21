@@ -147,8 +147,10 @@ func Video(ctx context.Context, comp Composition, path string, o Options) error 
 	if err != nil {
 		return err
 	}
-	if spec.sound, err = soundtrack(ctx, comp, from, to); err != nil {
-		return err
+	if !o.Silent {
+		if spec.sound, err = soundtrack(ctx, comp, from, to); err != nil {
+			return err
+		}
 	}
 	dir, base := filepath.Split(path)
 	ext := filepath.Ext(base)

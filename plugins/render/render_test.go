@@ -520,6 +520,47 @@ func TestVideo(t *testing.T) {
 	}
 }
 
+// TestVideoSilent: Silent builds each frame once, for drawing it, not
+// once more before to hear its sound, and the video has no sound track.
+func TestVideoSilent(t *testing.T) {
+	dir := t.TempDir()
+	const frames = 20
+	for _, silent := range []bool{false, true} {
+		comp := beeping(160, 90, frames, tone(440, sampleRate))
+		built := 0
+		view := comp.View
+		comp.View = func(c *ui.Context, f Frame) {
+			built++
+			view(c, f)
+		}
+		o := Options{Renderer: CPU, Silent: silent}
+		path := filepath.Join(dir, fmt.Sprintf("silent-%v.mp4", silent))
+		err := Video(context.Background(), comp, path, o)
+		if errors.Is(err, errors.ErrUnsupported) {
+			if _, lookErr := exec.LookPath("ffmpeg"); lookErr != nil {
+				t.Skip(err)
+			}
+			built = 0
+			o.Encoder = FFmpeg
+			err = Video(context.Background(), comp, path, o)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, sound := 2*frames, true
+		if silent {
+			want, sound = frames, false
+		}
+		if built != want {
+			t.Errorf("silent %v: %d frames built, want %d", silent, built, want)
+		}
+		tracks := mp4Tracks(t, path)
+		if tracks["vide"] != frames || (tracks["soun"] != 0) != sound {
+			t.Errorf("silent %v: tracks %v", silent, tracks)
+		}
+	}
+}
+
 // mp4FrameTimes returns the time scale of the video track of an MP4 or a
 // QuickTime movie, and how long its frames last in it: the runs of its
 // stts, each a count of frames and their duration.
