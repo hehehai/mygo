@@ -256,7 +256,7 @@ func coreFieldset(c *context, legend string, fn func()) *node {
 		g.Margin(t.Space(3), 0, 0, 0)
 	}
 	g.Children(func() {
-		coreText(c, legend).FontWeight(600)
+		coreText(c, legend).FontWeight(t.titleWeight(600))
 		fn()
 	})
 	return g

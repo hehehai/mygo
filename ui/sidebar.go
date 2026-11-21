@@ -131,7 +131,7 @@ func coreSidebarSection(c *context, title string, open *bool, fn func()) *node {
 			})
 		}
 		head.Children(func() {
-			coreText(c, title).FontSize(t.FontSize - 1).FontWeight(600).TextColor(t.TextMuted).Grow(1).SingleLine()
+			coreText(c, title).FontSize(t.FontSize - 1).FontWeight(t.titleWeight(600)).TextColor(t.TextMuted).Grow(1).SingleLine()
 			if open != nil {
 				arrow := disclosureArrow(c, 0)
 				turn := arrow.Animate("open", 90*b2f(shown), 150*time.Millisecond)

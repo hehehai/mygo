@@ -375,14 +375,14 @@ func (rt *engine) buildToasts(c *context) {
 					coreText(c, ts.Title)
 				} else {
 					coreColumn(c).Shrink(1).Gap(t.Space(0.5)).Children(func() {
-						coreText(c, ts.Title).FontWeight(600)
+						coreText(c, ts.Title).FontWeight(t.titleWeight(600))
 						coreText(c, ts.Description).TextColor(text.Alpha(0.75))
 					})
 				}
 				if ts.Action == "" {
 					return
 				}
-				b := p.ActionButton().Padding(t.Space(1), t.Space(2.5)).Radius(t.Radius).TextColor(t.Accent.Mix(text, 0.35)).FontWeight(600)
+				b := p.ActionButton().Padding(t.Space(1), t.Space(2.5)).Radius(t.Radius).TextColor(t.Accent.Mix(text, 0.35)).FontWeight(t.titleWeight(600))
 				b.styleFn = func(b *node) {
 					if b.Hovered() {
 						b.bg = text.Alpha(0.12)

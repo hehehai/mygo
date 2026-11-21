@@ -96,6 +96,14 @@ type Theme struct {
 	// FontSize is the size of text, Font its family ("" is the system's).
 	FontSize float32
 	Font     string
+	// TitleWeight is the weight of the titles widgets draw: a
+	// SidebarSection's, a Table's column headers and header rows, an
+	// AlertDialog's, a DatePicker's month, a toast's title (over its
+	// description) and action, a chosen tab's, a fieldset's legend. 0
+	// keeps theirs (600; an alert's and a month's 700); 400 draws them in
+	// the regular weight, as for an app whose type sets titles apart by
+	// size and colour alone.
+	TitleWeight int
 	// TooltipDelay is how long the pointer rests on an element before its
 	// tooltip shows (Tooltip, TooltipBase): 0 is 0.6 seconds, and a
 	// negative delay shows it at once. Within two thirds of it after
@@ -167,6 +175,15 @@ func (t *Theme) popupOptionRadius() float32 {
 		return t.Radius
 	}
 	return max(t.PopupRadius-t.Space(1), 4)
+}
+
+// titleWeight is the weight of a widget's title: the theme's
+// TitleWeight, or def.
+func (t *Theme) titleWeight(def int) int {
+	if t.TitleWeight > 0 {
+		return t.TitleWeight
+	}
+	return def
 }
 
 func orRadius(r, def float32) float32 {

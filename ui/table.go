@@ -324,7 +324,7 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 				col := &columns[j]
 				// The header is named by its title, which needs no node
 				// of its own beside it.
-				coreText(c, col.Title).SingleLine().FontWeight(600).TextColor(t.TextMuted).Role(RoleNone)
+				coreText(c, col.Title).SingleLine().FontWeight(t.titleWeight(600)).TextColor(t.TextMuted).Role(RoleNone)
 				if at, descending := s.sortPlace(col); at >= 0 {
 					place := 0
 					if s.SortBy != nil && len(*s.SortBy) > 1 {
@@ -358,7 +358,7 @@ func table(c *context, s *ListState, columns []TableColumn, n int, cell func(row
 			// The list's element holding the row is the row.
 			row.Role(RoleNone)
 			if s.Header != nil && s.Header(i) {
-				row.Padding(cellPadY, t.Space(2.5)).AlignItems(Center).Background(t.Surface).FontWeight(600)
+				row.Padding(cellPadY, t.Space(2.5)).AlignItems(Center).Background(t.Surface).FontWeight(t.titleWeight(600))
 				row.Children(func() { cell(i, 0) })
 				return
 			}
