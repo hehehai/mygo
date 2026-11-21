@@ -614,6 +614,9 @@ type menuState struct {
 	// pass builds it, as one asked for before the pass.
 	later          uint64
 	laterX, laterY float32
+	// laterContext is set when later is a context menu Handle.
+	// OpenContextMenu asked for, rather than a menu button's.
+	laterContext bool
 	// drawn is the menu drawn in the window that shows (PopoverMenu,
 	// PopoverMenuButton), nil while none does.
 	drawn *drawnMenu
@@ -810,8 +813,39 @@ func (rt *engine) menuKey() bool {
 // at (x, y), for the view asking for it after s was built.
 func (rt *engine) askMenuLater(s *state, x, y float32) {
 	mr := &rt.menu
-	mr.later, mr.laterX, mr.laterY = s.id, x, y
+	mr.later, mr.laterX, mr.laterY, mr.laterContext = s.id, x, y, false
 	rt.consumed = true
+}
+
+// OpenContextMenu opens the context menu of the control bound to the
+// handle in c's window at (x, y), in window DIPs, as a secondary click
+// there would: the control's ContextMenu (or PopoverMenu) function builds
+// it in the next frame, and again for the item chosen. For a menu asked
+// for by what the view cannot see as a click — a page in a web view that
+// tells the app which of its own elements was right-clicked — and for
+// menus opened from code. A control of no size, which nothing can click,
+// gives a menu only code opens. It reports false, and opens nothing, when
+// the control was not in the last frame, has no context menu or is
+// disabled. Asked for while the view builds, it opens once the pass ends.
+func (r Handle) OpenContextMenu(c *Context, x, y float32) bool {
+	rt := c.runtime()
+	b := (&r).binding(rt, false)
+	if b == nil || b.closed || b.id == 0 {
+		return false
+	}
+	s := rt.states[b.id]
+	if s == nil || s.flags&flagContextMenu == 0 || s.flags&flagDisabled != 0 {
+		return false
+	}
+	if rt.inFrame {
+		// The pass may have built the control already, and its end drops
+		// what no control built: asked for after it (endPass).
+		mr := &rt.menu
+		mr.later, mr.laterX, mr.laterY, mr.laterContext = s.id, x, y, true
+		return true
+	}
+	rt.askMenu(s, x, y, false)
+	return true
 }
 
 // openMenuButton has the next frame build the menu of menu button s, to

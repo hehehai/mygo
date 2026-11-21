@@ -1246,9 +1246,9 @@ func (rt *engine) endPass() {
 	rt.clickLater = rt.clickLater[:0]
 	if mr := &rt.menu; mr.later != 0 {
 		if s := rt.states[mr.later]; s != nil {
-			rt.askMenu(s, mr.laterX, mr.laterY, true)
+			rt.askMenu(s, mr.laterX, mr.laterY, !mr.laterContext)
 		}
-		mr.later = 0
+		mr.later, mr.laterContext = 0, false
 	}
 	rt.menu.chosen = 0
 	// A shortcut the view did not ask for again, as it changed: what
