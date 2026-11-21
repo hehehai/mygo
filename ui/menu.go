@@ -342,13 +342,15 @@ func (it *MenuItem) Radio(on bool) *MenuItem {
 }
 
 // MenuIcon is the image of a menu item, as mygo.NewMenuIcon makes it of a
-// PNG image, and mygo.NewMenuIconSVG of an SVG document.
+// PNG image, mygo.NewMenuIconScaled of one at its own size,
+// mygo.NewMenuIconSVG of an SVG document and mygo.NewMenuIconSymbol of a
+// system symbol.
 type MenuIcon interface {
 	PlatformMenuIcon() *platform.MenuIcon
 }
 
-// Icon shows an image beside the item's label, one mygo.NewMenuIcon or
-// mygo.NewMenuIconSVG made: make each once, not as the menu builds, and
+// Icon shows an image beside the item's label, one mygo.NewMenuIcon,
+// NewMenuIconScaled, NewMenuIconSVG or NewMenuIconSymbol made: make each once, not as the menu builds, and
 // give it to the items that show it. A template image takes the color of
 // the item's text, or its IconColor in the menus MyGo draws. nil shows
 // none. The system's menus show it as package mygo's items do (see
@@ -817,6 +819,7 @@ func (s *state) menuCorner() (x, y float32) {
 // openMenu shows the context menu built for the element id once the frame
 // is done.
 func (rt *engine) openMenu(id uint64, button bool, pm *platform.Menu, labels, keys, commands []string) {
+	tidySeparators(pm)
 	if len(pm.Items) == 0 {
 		return
 	}
@@ -825,6 +828,31 @@ func (rt *engine) openMenu(id uint64, button bool, pm *platform.Menu, labels, ke
 		pm.RightToLeft = true
 	}
 	mr.pending = &shownMenu{id: id, button: button, menu: pm, labels: labels, keys: keys, commands: commands, x: mr.x, y: mr.y, text: mr.text}
+}
+
+// tidySeparators drops the separators a menu (and its submenus) shows
+// first, last or after another, and the submenus left empty, so that a
+// menu built of groups that may each be empty shows no stray lines. The
+// items keep their IDs: a choice finds its item as before.
+func tidySeparators(m *platform.Menu) {
+	out := m.Items[:0]
+	for _, it := range m.Items {
+		if it.Submenu != nil {
+			tidySeparators(it.Submenu)
+			if len(it.Submenu.Items) == 0 && it.Type == platform.MenuItemSubmenu {
+				continue
+			}
+		}
+		if it.Type == platform.MenuItemSeparator && (len(out) == 0 || out[len(out)-1].Type == platform.MenuItemSeparator) {
+			continue
+		}
+		out = append(out, it)
+	}
+	for len(out) > 0 && out[len(out)-1].Type == platform.MenuItemSeparator {
+		out = out[:len(out)-1]
+	}
+	clear(m.Items[len(out):])
+	m.Items = out
 }
 
 // resolveMenu opens the menu asked for that no ContextMenu built, after a

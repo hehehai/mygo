@@ -47,8 +47,9 @@ notes it, for the change once the loop is done (see
   The system's menus show it on macOS and Linux, and `PopoverMenu` on
   every platform, also as the keys rest on it.
 - `Icon(icon)` shows an image beside its label, made once with
-  [`mygo.NewMenuIcon`](../menus.md#icons) of a PNG image, or
-  `mygo.NewMenuIconSVG` of an SVG. The system's menus show it as they show
+  [`mygo.NewMenuIcon`](../menus.md#icons) of a PNG image,
+  `mygo.NewMenuIconScaled` of one at its own size, `mygo.NewMenuIconSVG`
+  of an SVG, or `mygo.NewMenuIconSymbol` of an SF Symbol (macOS). The system's menus show it as they show
   the icons of `mygo.MenuItem`, browsers show none, and `PopoverMenu`
   draws it on every platform.
 - `IconColor(color)` draws its template icon in `color` instead of the
@@ -71,6 +72,9 @@ notes it, for the change once the loop is done (see
   it.
 - `Separator()` adds a line between groups of items, and
   `Submenu(label, build)` an item opening a submenu, which `build` fills.
+  A menu leaves out the separators it would show first, last or after
+  another, and the submenus left empty, so a menu built of groups that
+  may each be empty shows no stray lines.
 
 ## Which element
 
@@ -98,7 +102,8 @@ and Select All, which act on the selection.
 
 The same menu opens below a button with `Element.Menu`: see
 [menu button](menu-button.md). In tests, `tt.RightClick` opens a context
-menu, which `tt.Menu` lists and `tt.ChooseMenuItem` chooses from.
+menu, which `tt.Menu` lists (`tt.MenuTree` with submenus, icons, shortcuts
+and states) and `tt.ChooseMenuItem` chooses from.
 
 ## Drawn in the window
 

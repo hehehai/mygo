@@ -2,7 +2,9 @@ package mygo
 
 import (
 	"bytes"
+	"errors"
 	"image/png"
+	"math"
 	"runtime"
 	"slices"
 	"strings"
@@ -549,7 +551,40 @@ func NewMenuIcon(data []byte, template bool) (*MenuIcon, error) {
 	linkMenuIcons()
 	menuMu.Lock()
 	defer menuMu.Unlock()
-	return &MenuIcon{menuIcon(data, template)}, nil
+	return &MenuIcon{menuIcon(data, template, 0, "")}, nil
+}
+
+// NewMenuIconScaled makes an icon of a PNG image as NewMenuIcon does, shown
+// at its own size rather than fit to the box of 16 by 16 points: scale of
+// its pixels a point (2 for an image drawn at twice its size, sharp on
+// Retina displays), so an image wider than an icon, as a row of five rating
+// stars, keeps its size. macOS and the menus package ui draws show it so;
+// Windows and Linux fit it to the box, as NewMenuIcon's. It returns an
+// error for data that is not a PNG image or a scale that is not above 0.
+func NewMenuIconScaled(data []byte, scale float64, template bool) (*MenuIcon, error) {
+	if !(scale > 0) || math.IsInf(scale, 0) {
+		return nil, errors.New("mygo: NewMenuIconScaled needs a scale above 0")
+	}
+	if _, err := png.DecodeConfig(bytes.NewReader(data)); err != nil {
+		return nil, err
+	}
+	linkMenuIcons()
+	menuMu.Lock()
+	defer menuMu.Unlock()
+	return &MenuIcon{menuIcon(data, template, scale, "")}, nil
+}
+
+// NewMenuIconSymbol makes an icon of a system symbol: on macOS 11 and later
+// the SF Symbol of that name ("doc.on.doc", "trash"), which AppKit draws at
+// the size of the menu's text and tints as it, as the system's own menus
+// show them (Finder's, on macOS 26). A name the system does not have shows
+// no icon, as do Windows, Linux and the menus package ui draws
+// (PopoverMenu), which leave the icon's room empty.
+func NewMenuIconSymbol(name string) *MenuIcon {
+	linkMenuIcons()
+	menuMu.Lock()
+	defer menuMu.Unlock()
+	return &MenuIcon{menuIcon(nil, true, 0, name)}
 }
 
 // menuIcons are the images of menu items by their hash, so that icons of
@@ -557,23 +592,28 @@ func NewMenuIcon(data []byte, template bool) (*MenuIcon, error) {
 // even as an app makes its icons again. menuMu guards it.
 var menuIcons map[uint64]weak.Pointer[platform.MenuIcon]
 
-// menuIcon returns the icon of an image, shared with the items that show
-// the same. menuMu must be held.
-func menuIcon(data []byte, template bool) *platform.MenuIcon {
+// menuIcon returns the icon of an image, at scale (0: fit to the box), or
+// of the system symbol named symbol, shared with the items that show the
+// same. menuMu must be held.
+func menuIcon(data []byte, template bool, scale float64, symbol string) *platform.MenuIcon {
 	h := uint64(14695981039346656037) // FNV-1a
 	for _, c := range data {
 		h = (h ^ uint64(c)) * 1099511628211
 	}
+	for i := range len(symbol) {
+		h = (h ^ uint64(symbol[i])) * 1099511628211
+	}
+	h = (h ^ math.Float64bits(scale)) * 1099511628211
 	if template {
 		h = ^h
 	}
-	if ic := menuIcons[h].Value(); ic != nil && ic.Template == template && bytes.Equal(ic.PNG, data) {
+	if ic := menuIcons[h].Value(); ic != nil && ic.Template == template && ic.Scale == scale && ic.Symbol == symbol && bytes.Equal(ic.PNG, data) {
 		return ic
 	}
 	if menuIcons == nil {
 		menuIcons = map[uint64]weak.Pointer[platform.MenuIcon]{}
 	}
-	ic := &platform.MenuIcon{PNG: bytes.Clone(data), Template: template}
+	ic := &platform.MenuIcon{PNG: bytes.Clone(data), Template: template, Scale: scale, Symbol: symbol}
 	menuIcons[h] = weak.Make(ic)
 	if len(menuIcons) > 64 && len(menuIcons)&63 == 0 {
 		for k, wp := range menuIcons {

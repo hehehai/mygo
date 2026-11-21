@@ -15,6 +15,15 @@ type MenuIcon struct {
 	// Template is a black and transparent image, which takes the color of
 	// the menu's text where the backend can tint it.
 	Template bool
+	// Symbol names a system symbol the icon shows instead of PNG, which is
+	// then empty: an SF Symbol on macOS ("doc.on.doc"), a template image
+	// the system draws at the menu's size. Backends without symbols, and
+	// the menus package ui draws, show none.
+	Symbol string
+	// Scale, above 0, shows PNG at its own size, Scale pixels a point,
+	// rather than fit to MenuIconSize: a picture wider than an icon, as a
+	// row of rating stars. Backends that cannot fit it so fit it to the box.
+	Scale float64
 
 	native any
 	made   bool

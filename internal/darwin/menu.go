@@ -1258,14 +1258,30 @@ func LinkMenuIcons() { menuImage = iconImage }
 // aspect, from the representation fit for the display (an image of 32
 // pixels for Retina), and tints a template image as the menu's text, white
 // on the highlight. Its menu items show their state (the check) beside it.
+//
+// An icon of a symbol is the SF Symbol's image (macOS 11+), at the size
+// AppKit gives it beside the menu's text; an icon with a Scale is its
+// pixels at that scale.
 func iconImage(ic *platform.MenuIcon) id {
 	img, _ := ic.Native(func() any {
+		if ic.Symbol != "" {
+			img := send(class("NSImage"), "imageWithSystemSymbolName:accessibilityDescription:", uintptr(nsString(ic.Symbol)), 0)
+			if img == 0 {
+				return nil
+			}
+			retain(img)
+			runtime.AddCleanup(ic, func(img id) { release(img) }, img)
+			return img
+		}
 		img := send(send(class("NSImage"), "alloc"), "initWithData:", uintptr(nsData(ic.PNG)))
 		if img == 0 {
 			return nil
 		}
 		size := msgSize(img, sel("size"))
-		if box := float64(platform.MenuIconSize); size.Width > 0 && size.Height > 0 {
+		if rep := send(send(img, "representations"), "firstObject"); ic.Scale > 0 && rep != 0 {
+			w, h := sendInt(rep, "pixelsWide"), sendInt(rep, "pixelsHigh")
+			msgSetSize(img, sel("setSize:"), NSSize{float64(w) / ic.Scale, float64(h) / ic.Scale})
+		} else if box := float64(platform.MenuIconSize); size.Width > 0 && size.Height > 0 {
 			scale := box / max(size.Width, size.Height)
 			msgSetSize(img, sel("setSize:"), NSSize{size.Width * scale, size.Height * scale})
 		}

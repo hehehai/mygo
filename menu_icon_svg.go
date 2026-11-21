@@ -67,5 +67,5 @@ func NewMenuIconSVG(s SVGImage, template bool) (*MenuIcon, error) {
 	linkMenuIcons()
 	menuMu.Lock()
 	defer menuMu.Unlock()
-	return &MenuIcon{menuIcon(b.Bytes(), template)}, nil
+	return &MenuIcon{menuIcon(b.Bytes(), template, 0, "")}, nil
 }

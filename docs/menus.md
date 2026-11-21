@@ -210,6 +210,20 @@ var trash = ui.MustParseSVG(trashSVG) // ui.Icon(c, trash) in the window
 trashIcon, err := mygo.NewMenuIconSVG(trash, true)
 ```
 
+`NewMenuIconScaled(png, scale, template)` shows a PNG image at its own
+size, `scale` of its pixels a point, rather than fit to the box: an image
+wider than an icon, as a row of five rating stars, keeps its size on macOS
+and in the menus native UI draws (Windows and Linux fit it to the box).
+
+`NewMenuIconSymbol(name)` shows a system symbol: on macOS 11 and later the
+SF Symbol of that name, drawn by AppKit at the size of the menu's text and
+tinted as it, as Finder's own menus show them. An unknown name, Windows,
+Linux and the menus native UI draws show none.
+
+```go
+copyIcon := mygo.NewMenuIconSymbol("doc.on.doc")
+```
+
 In the menus native UI draws, an item's
 [`IconColor`](ui/context-menu.md#items) gives its template icon a color
 of its own.
