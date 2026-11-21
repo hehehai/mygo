@@ -923,6 +923,9 @@ type state struct {
 	holdStart time.Time
 	holdSteps int
 	dropped   []string
+	// fileDropX and fileDropY are where dropped were dropped, in the
+	// element's box.
+	fileDropX, fileDropY float32
 	// dragValue is the value the element drags (Drag), or dragFn returns
 	// it as the drag starts; accepts reports whether it takes a value
 	// dragged (Drop), and droppedValue is the value dropped on it, while

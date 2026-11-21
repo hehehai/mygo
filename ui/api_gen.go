@@ -1745,7 +1745,9 @@ func Local[T any](e Element, key any, init func() T) *T {
 // Right opens a submenu and Left closes it, the other way round right to
 // left (Direction); Enter and Space choose an item, Escape closes the
 // submenu on top, and Tab and a press outside the menu close it. The
-// pointer highlights the item it moves onto, opening its submenu.
+// pointer highlights the item it moves onto, opening its submenu, but for
+// those it crosses heading for a submenu that shows, which stays open
+// until the pointer rests on one of them (menuAimGrace).
 // Assistive technology sees a menu button, expanded while its menu shows,
 // and a menu of items, check box items and radio items. PopoverMenuButton
 // draws its menu with these parts, in the theme's look.
@@ -5065,6 +5067,18 @@ func (_handle Element) DroppedFiles() []string {
 	return _node.DroppedFiles()
 }
 
+// DroppedFilesAt is DroppedFiles with where they were dropped, in the
+// element's box: a timeline places a file at the time under the drop.
+func (_handle Element) DroppedFilesAt() ([]string, float32, float32) {
+	_node := _handle.node()
+	if _node == nil {
+		return nil, 0, 0
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.DroppedFilesAt()
+}
+
 // Effect draws the element, with its children, through fx, an effect of
 // package ui/shader, in place of drawing it as it is; nil draws it as it
 // is:
@@ -5169,6 +5183,19 @@ func (_handle Element) Expanded(open bool) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.Expanded(open))
+}
+
+// FileDragAt is FileDragOver with where the files are, in the element's
+// box, for showing where they would go (a frame follows each move over
+// the element that takes them).
+func (_handle Element) FileDragAt() (float32, float32, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return 0, 0, false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.FileDragAt()
 }
 
 // FileDragOver reports whether files dragged from another app are over

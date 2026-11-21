@@ -16,11 +16,32 @@ func (e *node) DroppedFiles() []string {
 	return e.st.dropped
 }
 
+// DroppedFilesAt is DroppedFiles with where they were dropped, in the
+// element's box: a timeline places a file at the time under the drop.
+func (e *node) DroppedFilesAt() (files []string, x, y float32) {
+	files = e.DroppedFiles()
+	if len(files) == 0 {
+		return nil, 0, 0
+	}
+	return files, e.st.fileDropX, e.st.fileDropY
+}
+
 // FileDragOver reports whether files dragged from another app are over
 // the element, which takes them if they are dropped, for showing it would.
 func (e *node) FileDragOver() bool {
 	e.flags |= flagDropTarget
 	return e.c.rt.dropOver == e.id
+}
+
+// FileDragAt is FileDragOver with where the files are, in the element's
+// box, for showing where they would go (a frame follows each move over
+// the element that takes them).
+func (e *node) FileDragAt() (x, y float32, over bool) {
+	if !e.FileDragOver() || !e.hasState() {
+		return 0, 0, false
+	}
+	x, y = e.st.local(e.c.rt.dropOverX, e.c.rt.dropOverY)
+	return x, y, true
 }
 
 // dropTarget returns the innermost element at (x, y) that takes files.
@@ -42,10 +63,11 @@ func (rt *engine) fileDrag(x, y float32) bool {
 			over = s.id
 		}
 	}
-	if over != rt.dropOver {
+	if over != rt.dropOver || over != 0 && (x != rt.dropOverX || y != rt.dropOverY) {
 		rt.dropOver = over
 		rt.requestFrame()
 	}
+	rt.dropOverX, rt.dropOverY = x, y
 	return over != 0
 }
 
@@ -57,6 +79,7 @@ func (rt *engine) fileDrop(x, y float32, files []string) bool {
 		return false
 	}
 	s.dropped = append(s.dropped, files...)
+	s.fileDropX, s.fileDropY = s.local(x, y)
 	rt.requestFrame()
 	return true
 }
