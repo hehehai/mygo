@@ -102,6 +102,8 @@ func macType(f transfer.Format) string {
 		return utPNG
 	case transfer.FileList:
 		return "public.file-url"
+	case transfer.PromisedFiles:
+		return macPromiseType
 	case transfer.URIList:
 		// public.url carries one URL. Keep the full URI-list bytes in a
 		// separate type and offer public.url as an interoperable fallback.
@@ -204,6 +206,9 @@ func (s *surface) SetDropFormats(formats []transfer.Format) {
 	}
 	if slices.Contains(formats, transfer.URIList) {
 		types = append(types, nsString("public.url"))
+	}
+	if slices.Contains(formats, transfer.PromisedFiles) {
+		types = append(types, promiseTypeIDs()...)
 	}
 	send(s.view, "registerForDraggedTypes:", uintptr(nsArray(types...)))
 }
@@ -316,9 +321,15 @@ func (s *surface) nativeDataEvent(info id, kind platform.SurfaceEventKind) bool 
 	d := &platform.DataDragEvent{Offer: transfer.Offer{Operations: goOperations(uint(send(info, "draggingSourceOperationMask")))}}
 	d.Session = goString(send(pb, "stringForType:", uintptr(nsString(macType(platform.DragSessionFormat)))))
 	items := arrayItems(send(pb, "pasteboardItems"))
+	promises := false
 	for _, item := range items {
 		for _, t := range arrayItems(send(item, "types")) {
-			f := macFormat(goString(t))
+			name := goString(t)
+			if isPromiseType(name) && !promises {
+				promises = true
+				d.Offer.Formats = append(d.Offer.Formats, transfer.PromisedFiles)
+			}
+			f := macFormat(name)
 			if f == platform.DragSessionFormat {
 				continue
 			}
@@ -374,6 +385,11 @@ func (s *surface) nativeDataEvent(info id, kind platform.SurfaceEventKind) bool 
 		}
 		if len(reps) > 0 {
 			dataItems = append(dataItems, transfer.NewItem(reps...))
+		}
+	}
+	if promises && slices.Contains(d.Formats, transfer.PromisedFiles) {
+		if token := receivePromises(pb); token != "" {
+			dataItems = append(dataItems, promiseItem(token))
 		}
 	}
 	d.Data = transfer.New(dataItems...)
