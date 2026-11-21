@@ -76,7 +76,9 @@ var updateSource atomic.Pointer[UpdateSource]
 type UpdateSource interface {
 	// Manifest returns the manifest of the running platform: the JSON that
 	// `mygo build` writes as update-<target>.json, such as
-	// update-darwin-arm64.json, of at most 1 MiB.
+	// update-darwin-arm64.json, of at most 1 MiB, or an error wrapping
+	// ErrNotPublished or fs.ErrNotExist when none is published, which
+	// Check reports as no update.
 	// prereleases reports whether the app offers them (SetPrereleases).
 	Manifest(ctx context.Context, prereleases bool) (io.ReadCloser, error)
 	// Open returns the file at url, which the manifest names: the archive
@@ -102,6 +104,14 @@ func (u *UpdaterModule) SetSource(s UpdateSource) {
 // ErrUpdatesDisabled is returned by Check for builds without updates:
 // development builds, and builds of apps without updates in mygo.config.ts.
 var ErrUpdatesDisabled = errors.New("mygo: updates are not enabled for this build")
+
+// ErrNotPublished says that a feed has no version published: its manifest
+// is not found (404), as before an app's first release or after every
+// release was withdrawn, or GitHub has no release of its tag prefix.
+// Nothing published is nothing newer, so Check returns no update and no
+// error for it. An UpdateSource returns an error wrapping it, or
+// fs.ErrNotExist, for the same.
+var ErrNotPublished = update.ErrNotPublished
 
 // Update is a newer version of the app, found by Updater.Check.
 type Update struct {
@@ -190,6 +200,11 @@ func (f feedSource) Open(ctx context.Context, url string) (io.ReadCloser, error)
 
 func checkUpdate(ctx context.Context, src UpdateSource, key, current string, pre bool) (*Update, error) {
 	body, err := src.Manifest(ctx, pre)
+	if errors.Is(err, ErrNotPublished) || errors.Is(err, fs.ErrNotExist) {
+		// No manifest: nothing has been published yet (or every release
+		// was withdrawn), so the app is up to date.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("mygo: checking for updates: %w", err)
 	}
@@ -742,7 +757,7 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 			resp.Body.Close()
 			cancel()
 			if !transientStatus(resp.StatusCode) || try >= len(httpRetries) {
-				return nil, fmt.Errorf("GET %s: %s", rawURL, resp.Status)
+				return nil, &httpStatusError{URL: rawURL, Code: resp.StatusCode, Status: resp.Status}
 			}
 			wait = retryAfter(resp.Header.Get("Retry-After"))
 		}
@@ -753,6 +768,20 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 		case <-time.After(wait):
 		}
 	}
+}
+
+// httpStatusError is a response of httpGet other than 200 OK. A 404 is
+// ErrNotPublished (errors.Is): a file that is not published.
+type httpStatusError struct {
+	URL    string
+	Code   int
+	Status string
+}
+
+func (e *httpStatusError) Error() string { return "GET " + e.URL + ": " + e.Status }
+
+func (e *httpStatusError) Is(target error) bool {
+	return e.Code == http.StatusNotFound && target == ErrNotPublished
 }
 
 // httpHeaderTimeout is how long the headers of a response may take to

@@ -9,8 +9,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
@@ -166,6 +168,19 @@ func TestUpdater(t *testing.T) {
 	}
 	if _, err := checkUpdate(ctx, feedSource("http://example.com/update.json"), key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Errorf("plain HTTP: %v", err)
+	}
+	// A feed with nothing published yet: up to date, not an error, and so
+	// is a source that says so; other failures stay errors.
+	if up, err := checkUpdate(ctx, feedSource(srv.URL+"/missing/update.json"), key, "1.0.0", false); up != nil || err != nil {
+		t.Errorf("checkUpdate of a feed with no manifest = %+v, %v", up, err)
+	}
+	for _, e := range []error{fmt.Errorf("nothing at %s: %w", srv.URL, fs.ErrNotExist), fmt.Errorf("%w", ErrNotPublished)} {
+		if up, err := checkUpdate(ctx, errSource{e}, key, "1.0.0", false); up != nil || err != nil {
+			t.Errorf("checkUpdate of a source that has nothing (%v) = %+v, %v", e, up, err)
+		}
+	}
+	if _, err := checkUpdate(ctx, errSource{errors.New("offline")}, key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "offline") {
+		t.Errorf("checkUpdate of a failing source: %v", err)
 	}
 
 	target, main := installedApp(t)
@@ -444,6 +459,12 @@ func TestUpdaterPrereleases(t *testing.T) {
 		t.Error("SetPrereleases(false) did not turn them off")
 	}
 }
+
+// errSource fails with err.
+type errSource struct{ err error }
+
+func (s errSource) Manifest(context.Context, bool) (io.ReadCloser, error) { return nil, s.err }
+func (s errSource) Open(context.Context, string) (io.ReadCloser, error)   { return nil, s.err }
 
 // testSource serves the update of updateServer as an update service of the
 // app's own could: its manifest names the files by ids that only Open
