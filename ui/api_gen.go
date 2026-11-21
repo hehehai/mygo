@@ -6246,6 +6246,25 @@ func (_handle Element) Lines(min int, max int) Element {
 	return wrapElement(_node.Lines(min, max))
 }
 
+// LiveValue makes a Slider (or StepSlider) paint the value fn returns as
+// it paints (given the slider's box, in DIPs relative to the window, as
+// Draw is), rather than *value as the view was built, while it is not
+// pressed: a value that moves with the frame's time (Painter.Now) between
+// builds, as a player's position, which then costs a frame only its
+// painting. fn may ask for the next frame (Painter.AnimationFrame, After)
+// while the value moves; it runs only while the slider is in view.
+// *value stays what dragging and the keys set and assistive technology
+// reads. A SliderBase draws itself: its Draw may call fn.
+func (_handle Element) LiveValue(fn func(p *Painter, r Rect) float64) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.LiveValue(fn))
+}
+
 // LocalToWindow maps a point in the previous frame's border box to the window.
 func (_handle Element) LocalToWindow(x float32, y float32) (float32, float32) {
 	_node := _handle.node()

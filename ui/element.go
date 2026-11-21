@@ -721,6 +721,9 @@ type node struct {
 	// extendsChoice marks a sidebar item whose clicks with Command or
 	// Shift leave the sidebar's choice to the app (ExtendsChoice).
 	extendsChoice bool
+	// liveValue is the value a Slider paints while not pressed, asked as
+	// it paints (LiveValue); nil: the value it was built with.
+	liveValue func(p *Painter, r Rect) float64
 	// chooseMany marks a GridView choosing several items, or an element
 	// whose items are (Multiselectable), and gridFit is how many columns
 	// a GridView's items took.

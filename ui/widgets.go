@@ -353,13 +353,22 @@ func slider(c *context, value *float64, lo, hi, step float64) *node {
 	}
 	held := s.Animate("held", b2f(s.st.pressedPrimary()), 150*time.Millisecond)
 	fill := c.accent(t)
+	pressed := s.st.pressedPrimary()
 	s.Draw(func(p *Painter, r Rect) {
+		f := frac
+		if s.liveValue != nil && !pressed {
+			// LiveValue: where the value is now.
+			f = fraction(s.liveValue(p, r), lo, hi)
+			if rtl {
+				f = 1 - f
+			}
+		}
 		// As thick as Progress; above the ticks.
 		h := t.Space(1.5)
 		cy := r.Y + t.Space(2.5)
 		track := Rect{r.X, cy - h/2, r.W, h}
 		paintTicks(p, t, r, kw, ticks, cy+kh/2+t.Space(1))
-		x := r.X + kw/2 + (r.W-kw)*frac
+		x := r.X + kw/2 + (r.W-kw)*f
 		k := knobRect(t, x, cy, held)
 		if held > 0 {
 			// The lens lightens what is behind it, under the track.
