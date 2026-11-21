@@ -5176,6 +5176,34 @@ func (_handle Element) ErrorMessage(msg Element) Element {
 	return wrapElement(_node.ErrorMessage(msg.nodeFor(_ctx.rt)))
 }
 
+// ExpandAsked reports whether assistive technology asked to open (open
+// true) or to close an Expandable element since the last frame; asked
+// is false when it did not.
+func (_handle Element) ExpandAsked() (bool, bool) {
+	_node := _handle.node()
+	if _node == nil {
+		return false, false
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return _node.ExpandAsked()
+}
+
+// Expandable makes the element one that shows or hides others below it,
+// as an item of a tree with children (a folder in a sidebar built with
+// SidebarItem): assistive technology reads it as expanded or collapsed
+// (open), and may ask to open or close it, which ExpandAsked reports, as
+// it does for a SidebarSection and the items of a Tree.
+func (_handle Element) Expandable(open bool) Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Expandable(open))
+}
+
 // Expanded tells assistive technology whether what the element opens
 // shows, as the popup of a button or the section below a header.
 func (_handle Element) Expanded(open bool) Element {
