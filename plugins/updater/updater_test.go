@@ -425,6 +425,47 @@ func TestAutomaticDownloads(t *testing.T) {
 	}
 }
 
+func TestFound(t *testing.T) {
+	var found atomic.Value
+	quiet := atomic.Bool{}
+	quiet.Store(true)
+	h := newHarness(t, Options{Found: func(v string) bool { found.Store(v); return quiet.Load() }})
+	h.result = func(context.Context) (*release, error) { return newRelease("2.0.0", nil), nil }
+	// The app tells the user: no window, and the check counts.
+	waitDone(t, h.begin(false))
+	h.noWindow()
+	if found.Load() != "2.0.0" || h.saved().LastCheck.IsZero() {
+		t.Fatalf("found %v, last check %v", found.Load(), h.saved().LastCheck)
+	}
+	// The user's check shows it, without asking the app.
+	found.Store("")
+	done := h.begin(true)
+	s := h.shown()
+	v := waitView(t, s, "A new version of")
+	s.Respond(v.Prompt, actionSkip, false)
+	waitDone(t, done)
+	if found.Load() != "" {
+		t.Errorf("the user's check called Found with %v", found.Load())
+	}
+	// A skipped version is not found again; a newer one is, and the
+	// window shows when the app does not tell the user.
+	waitDone(t, h.begin(false))
+	h.noWindow()
+	if found.Load() != "" {
+		t.Errorf("a skipped version was found: %v", found.Load())
+	}
+	quiet.Store(false)
+	h.result = func(context.Context) (*release, error) { return newRelease("2.0.1", nil), nil }
+	done = h.begin(false)
+	s = h.shown()
+	waitView(t, s, "A new version of")
+	s.close()
+	waitDone(t, done)
+	if found.Load() != "2.0.1" {
+		t.Errorf("found %v", found.Load())
+	}
+}
+
 func TestCancelDownload(t *testing.T) {
 	h := newHarness(t, Options{})
 	canceled := make(chan error, 1)
