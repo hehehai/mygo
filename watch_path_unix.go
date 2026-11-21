@@ -10,6 +10,14 @@ import (
 
 func fileWatchOpenRoot(path string) (*os.Root, error) { return os.OpenRoot(path) }
 
+// fileWatchHoldsRoot says a watch keeps its directory open between two
+// looks. Here it opens it for each look and closes it after: a directory
+// held open keeps its volume from being unmounted, so a disk with a
+// watched folder on it could not be ejected ("in use"). What the watch
+// knows of the directory's identity tells it when it was replaced
+// meanwhile.
+const fileWatchHoldsRoot = false
+
 // fileWatchInaccessible reports whether err says a file can't be looked
 // at.
 func fileWatchInaccessible(err error) bool { return errors.Is(err, fs.ErrPermission) }
