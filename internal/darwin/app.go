@@ -4,6 +4,7 @@ package darwin
 
 import (
 	"strings"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -23,6 +24,11 @@ type Backend struct {
 	// background is AppOptions.Background: the app does not come to the
 	// front as it finishes launching.
 	background bool
+
+	// ran: Run's event loop returned (any goroutine); stopping:
+	// keepStopping's goroutine runs (main thread).
+	ran      atomic.Bool
+	stopping bool
 
 	// Lookup tables for Objective-C callbacks. Main thread only.
 	byDelegate map[id]*window
@@ -192,6 +198,7 @@ var dispatchCallback = purego.NewCallback(func(info uintptr) {
 
 func (b *Backend) Run() error {
 	send(b.app, "run")
+	b.ran.Store(true)
 	return nil
 }
 
@@ -202,11 +209,13 @@ func (b *Backend) Quit() {
 		// unwound (see runPanel).
 		b.quitAfterModal = true
 		send(b.app, "abortModal")
+		b.keepStopping() // a session not runPanel's would not stop the loop after
 		return
 	}
 	send(b.app, "stop:", 0)
 	// stop: takes effect after the next event; make sure there is one.
 	b.postEvent(0)
+	b.keepStopping()
 }
 
 func (b *Backend) Signal() {
