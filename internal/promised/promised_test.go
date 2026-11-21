@@ -3,6 +3,8 @@ package promised
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -32,5 +34,43 @@ func TestWait(t *testing.T) {
 	p.Add("", errors.New("denied"))
 	if _, _, err := Wait(context.Background(), token); err == nil || err.Error() != "denied" {
 		t.Fatalf("failed: %v", err)
+	}
+}
+
+// TestForgotten: a promise no one waits for is forgotten after keep, and
+// its folder removed with what was written in it; one waited for keeps
+// its folder (the caller removes it).
+func TestForgotten(t *testing.T) {
+	keep = 30 * time.Millisecond
+	t.Cleanup(func() { keep = Keep })
+	dir := t.TempDir()
+	forgotten, taken := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	for _, d := range []string{forgotten, taken} {
+		os.MkdirAll(d, 0o755)
+		os.WriteFile(filepath.Join(d, "pic.png"), []byte("x"), 0o644)
+	}
+	t1, p1 := New(1, forgotten)
+	p1.Add(filepath.Join(forgotten, "pic.png"), nil)
+	t2, p2 := New(1, taken)
+	p2.Add(filepath.Join(taken, "pic.png"), nil)
+	if _, _, err := Wait(context.Background(), t2); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(forgotten); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the forgotten promise's folder stays")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, _, err := Wait(context.Background(), t1); !errors.Is(err, ErrUnknown) {
+		t.Errorf("forgotten: %v", err)
+	}
+	time.Sleep(3 * keep)
+	if _, err := os.Stat(filepath.Join(taken, "pic.png")); err != nil {
+		t.Errorf("the taken promise's folder went: %v", err)
 	}
 }

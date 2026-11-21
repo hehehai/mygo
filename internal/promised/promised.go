@@ -10,12 +10,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"os"
 	"sync"
 	"time"
 )
 
-// Keep is how long a promise stays registered without being waited for.
+// Keep is how long a promise stays registered without being waited for;
+// then its folder, and what the source wrote in it, is removed.
 const Keep = 10 * time.Minute
+
+// keep is Keep (tests shorten it).
+var keep = Keep
 
 // ErrUnknown: the token names no promise (taken already, or too old).
 var ErrUnknown = errors.New("transfer: no such promised files")
@@ -45,7 +50,7 @@ func New(want int, dir string) (string, *Promise) {
 		p.End()
 	}
 	reg.Store(token, p)
-	time.AfterFunc(Keep, func() { reg.Delete(token) })
+	time.AfterFunc(keep, func() { forget(token) })
 	return token, p
 }
 
@@ -103,4 +108,14 @@ func Wait(ctx context.Context, token string) ([]string, string, error) {
 		}
 	}
 	return files, p.Dir, nil
+}
+
+// forget drops the promise of token no one waited for, and removes its
+// folder: no one will take or remove the files written in it.
+func forget(token string) {
+	if v, ok := reg.LoadAndDelete(token); ok {
+		if dir := v.(*Promise).Dir; dir != "" {
+			os.RemoveAll(dir)
+		}
+	}
 }
