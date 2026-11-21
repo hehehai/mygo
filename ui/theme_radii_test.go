@@ -34,7 +34,9 @@ func TestThemeRadii(t *testing.T) {
 			tt = NewTester(func(c *Context) {
 				c.SetTheme(s.theme)
 				Column(c).Fill().Background(Hex("#ff0000")).Padding(40).AlignItems(Start).Children(func() {
-					b := Button(c.Key("anchor"), "Anchor")
+					// A fixed height: the popover's edges fall on whole
+					// pixels whatever the platform's text measures.
+					b := Button(c.Key("anchor"), "Anchor").Height(32)
 					if !dialog {
 						Popover(c.Key("pop"), b, &pop, func() { Box(c).Size(120, 40).Label("inside") })
 					}
@@ -69,14 +71,16 @@ func TestThemeRadii(t *testing.T) {
 			t.Errorf("%s: the alert's corner off it %v, want %v", s.name, got, s.round)
 		}
 		// The popover's panel: 4 DIPs of padding and its border around
-		// what it holds; 3 in, inside 8's arc, outside 16's.
+		// what it holds. The pixel 4 in from both edges is 5.7 DIPs from
+		// the centre of 8's arc, clear of its border, and 17 from the
+		// centre of 16's, off the panel.
 		view(false)
 		in := bounds("inside")
 		px, py := in.X-5, in.Y-5
 		if !white(in.X+2, in.Y+2) {
 			t.Fatalf("%s: the popover is not white", s.name)
 		}
-		if got := !white(px+3, py+3); got != s.round {
+		if got := !white(px+4, py+4); got != s.round {
 			t.Errorf("%s: the popover's corner off it %v, want %v", s.name, got, s.round)
 		}
 	}
