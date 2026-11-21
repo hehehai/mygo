@@ -887,6 +887,34 @@ func (s *surface) location(ev id) (float64, float64) {
 	return p.X, p.Y
 }
 
+// magnify sends a touchpad's pinch (magnifyWithEvent:) as a zoom:
+// magnification is how much the pinch grew the content since its last
+// event, as a fraction of its size then.
+func magnify(s *surface, ev id) {
+	x, y := s.location(ev)
+	s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: x, Y: y, Scale: 1 + msgFloat(ev, sel("magnification")),
+		Phase: gesturePhase(uint(send(ev, "phase"))), Mods: eventMods(ev)})
+}
+
+// swipe sends a touchpad's swipe (swipeWithEvent:) to the content, whose
+// elements may take it (InputSwipe), as a viewer paging through pictures:
+// AppKit's deltaX is 1 when the fingers moved right (back), so forward is
+// DX 1. One the content leaves goes back or forward, as the side buttons
+// do: the buttons of mice whose makers' software sends swipes for them,
+// as Logi Options+ does, and touchpads set to swipe between pages.
+func swipe(s *surface, ev id) {
+	x, y := s.location(ev)
+	dx, dy := msgFloat(ev, sel("deltaX")), msgFloat(ev, sel("deltaY"))
+	mods := eventMods(ev)
+	if s.send(platform.SurfaceEvent{Kind: platform.PointerSwipe, X: x, Y: y, DX: -dx, DY: dy, Mods: mods}) {
+		return
+	}
+	if back, ok := swipeBack(dx); ok {
+		s.sideButton(platform.PointerDown, back, mods)
+		s.sideButton(platform.PointerUp, back, mods)
+	}
+}
+
 // gesturePhase is an NSEvent's phase (NSEventPhase), or its momentumPhase,
 // as a gesture's: NSEventPhaseNone is none (a mouse wheel, an event of no
 // gesture), and a gesture's fingers resting (MayBegin, Stationary) are
@@ -1373,15 +1401,9 @@ func registerSurfaceClass() {
 
 		}),
 		method("magnifyWithEvent:", func(self id, _ objc.SEL, ev id) {
-			s := b().surfaceOf(self)
-			if s == nil {
-				return
+			if s := b().surfaceOf(self); s != nil {
+				magnify(s, ev)
 			}
-			// magnification is how much the pinch grew the content since
-			// its last event, as a fraction of its size then.
-			x, y := s.location(ev)
-			s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: x, Y: y, Scale: 1 + msgFloat(ev, sel("magnification")),
-				Phase: gesturePhase(uint(send(ev, "phase"))), Mods: eventMods(ev)})
 		}),
 		// Two fingers tapped twice: a smart zoom, a gesture of one event.
 		method("smartMagnifyWithEvent:", func(self id, _ objc.SEL, ev id) {
@@ -1393,26 +1415,8 @@ func registerSurfaceClass() {
 			s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: x, Y: y, Scale: 1, Phase: platform.GestureSmart, Mods: eventMods(ev)})
 		}),
 		method("swipeWithEvent:", func(self id, _ objc.SEL, ev id) {
-			s := b().surfaceOf(self)
-			if s == nil {
-				return
-			}
-			// The content's elements may take it (InputSwipe), as a viewer
-			// paging through pictures; AppKit's deltaX is 1 when the
-			// fingers moved right (back): forward is DX 1.
-			x, y := s.location(ev)
-			dx, dy := msgFloat(ev, sel("deltaX")), msgFloat(ev, sel("deltaY"))
-			mods := eventMods(ev)
-			if s.send(platform.SurfaceEvent{Kind: platform.PointerSwipe, X: x, Y: y, DX: -dx, DY: dy, Mods: mods}) {
-				return
-			}
-			// Else it goes back and forward, as the side buttons do: the
-			// buttons of mice whose makers' software sends swipes for
-			// them, as Logi Options+ does, and touchpads set to swipe
-			// between pages.
-			if back, ok := swipeBack(dx); ok {
-				s.sideButton(platform.PointerDown, back, mods)
-				s.sideButton(platform.PointerUp, back, mods)
+			if s := b().surfaceOf(self); s != nil {
+				swipe(s, ev)
 			}
 		}),
 		method("keyDown:", func(self id, _ objc.SEL, ev id) {
