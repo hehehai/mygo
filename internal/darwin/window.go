@@ -2566,6 +2566,13 @@ func (b *Backend) windowFor(delegate id) *window {
 	return w
 }
 
+// panelCanBecomeKey is MyGoPanel's canBecomeKeyWindow: a panel takes the
+// keyboard unless it is not Focusable (mygo.PanelKeyboardNever).
+func panelCanBecomeKey(self id, _ objc.SEL) bool {
+	w := theBackend.byNSWindow[self]
+	return w == nil || w.opts.Focusable
+}
+
 func registerWindowClasses() {
 	// WebKit moves the keyboard out of a page past its ends through the
 	// window's key view loop: a web view in native UI gives it back to
@@ -2593,10 +2600,7 @@ func registerWindowClasses() {
 	// content and leave the app in front, and its first responder, alone.
 	classDef("MyGoPanel", "NSPanel", nil, []objc.MethodDef{
 		method("orderWindow:relativeTo:", orderWindowRelativeTo("MyGoPanel")),
-		method("canBecomeKeyWindow", func(self id, _ objc.SEL) bool {
-			w := theBackend.byNSWindow[self]
-			return w == nil || w.opts.Focusable
-		}),
+		method("canBecomeKeyWindow", panelCanBecomeKey),
 		method("canBecomeMainWindow", func(self id, _ objc.SEL) bool { return false }),
 		// NSPanel closes on an Escape its content leaves (cancelOperation:),
 		// past windowShouldClose: MyGo closes it then, as the user closing
