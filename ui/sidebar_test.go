@@ -134,3 +134,39 @@ func TestSidebarEntry(t *testing.T) {
 		t.Fatalf("texts %q", tt.Texts())
 	}
 }
+
+// A click with Command or Shift on an item that ExtendsChoice leaves the
+// choice to the app, which reads the click; on another item, or without
+// them, it chooses as before.
+func TestSidebarExtendsChoice(t *testing.T) {
+	place, changes := "a", 0
+	var extended []string
+	tt := coreNewTester(func(c *context) {
+		if coreSidebar(c, &place, func() {
+			coreSidebarSection(c, "Places", nil, func() {
+				for _, id := range []string{"a", "b", "c"} {
+					it := coreSidebarItem(c, id, nil, "Item "+id).ExtendsChoice()
+					if it.Clicked() && it.ClickModifiers()&(Cmd|Shift) != 0 {
+						extended = append(extended, id)
+					}
+				}
+				coreSidebarItem(c, "d", nil, "Item d")
+			})
+		}).Width(200).Changed() {
+			changes++
+		}
+	}, 400, 300)
+	tt.ClickWith(Cmd, "Item b")
+	tt.ClickWith(Shift, "Item c")
+	if place != "a" || changes != 0 || len(extended) != 2 || extended[0] != "b" || extended[1] != "c" {
+		t.Fatalf("⌘ and ⇧ clicks: %q, %d changes, extended %q", place, changes, extended)
+	}
+	tt.Click("Item b")
+	if place != "b" || changes != 1 {
+		t.Fatalf("a click: %q, %d changes", place, changes)
+	}
+	tt.ClickWith(Cmd, "Item d")
+	if place != "d" || changes != 2 {
+		t.Fatalf("⌘-click on an item that does not extend: %q, %d changes", place, changes)
+	}
+}

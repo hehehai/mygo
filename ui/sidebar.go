@@ -8,14 +8,17 @@ import (
 
 // sidebarBuild is a Sidebar being built: the ID of its item chosen, its
 // items in order and those of the last frame, for the keys, how deep the
-// items being built are, and the element of the item chosen.
+// items being built are, the element of the item chosen, and the item
+// clicked, which is chosen once the items are built (ExtendsChoice).
 type sidebarBuild struct {
-	e        *node
-	selected *string
-	items    []sidebarEntry
-	last     []sidebarEntry
-	depth    int
-	chosen   *node
+	e         *node
+	selected  *string
+	items     []sidebarEntry
+	last      []sidebarEntry
+	depth     int
+	chosen    *node
+	clicked   *node
+	clickedID string
 }
 
 // sidebarEntry is an item of a sidebar: its ID and its label.
@@ -51,11 +54,25 @@ func coreSidebar(c *context, selected *string, fn func()) *node {
 	e.Children(fn)
 	c.sidebar = saved
 	*last = sb.items
+	e.afterInput(sb.choose)
 	e.afterInput(sb.keys)
 	// The item chosen has the focus for assistive technology, as a list's
 	// row chosen does.
 	e.activeDescendant = sb.chosen
 	return e
+}
+
+// choose chooses the item clicked, unless it was clicked with Command or
+// Shift and extends a choice of the app's (ExtendsChoice).
+func (sb *sidebarBuild) choose() {
+	item, id := sb.clicked, sb.clickedID
+	if item == nil || item.extendsChoice && item.st.clickMods&(Cmd|Shift) != 0 {
+		return
+	}
+	if *sb.selected != id {
+		*sb.selected = id
+		sb.e.st.markChanged()
+	}
 }
 
 // keys chooses among the items with the arrows, Home, End and the first
@@ -169,11 +186,11 @@ func coreSidebarItem(c *context, id string, icon *SVG, label string) *node {
 	if sb != nil {
 		item.level = sb.depth + 1
 		item.afterInput(func() {
-			if item.Clicked() && *sb.selected != id {
-				*sb.selected = id
-				sb.e.st.markChanged()
+			// Chosen once the items are built: the app may say what a
+			// click with Command or Shift does (ExtendsChoice).
+			if item.Clicked() {
+				sb.clicked, sb.clickedID = item, id
 			}
-
 		})
 		chosen, focused = *sb.selected == id, sb.e.Focused()
 		sb.items = append(sb.items, sidebarEntry{id, label})
@@ -214,6 +231,16 @@ func coreSidebarItem(c *context, id string, icon *SVG, label string) *node {
 		coreText(c, label).Grow(1).SingleLine()
 	})
 	return item
+}
+
+// ExtendsChoice makes a click on the sidebar item with Command or Shift
+// held leave the sidebar's choice as it is, for the app to add the item
+// to a choice of several of its own, as Finder's ⌘-click and ⇧-click
+// extend a selection: Clicked and ClickModifiers report the click. A click
+// without them chooses the item as before.
+func (e *node) ExtendsChoice() *node {
+	e.extendsChoice = true
+	return e
 }
 
 // SidebarEntry adds an item to a Sidebar without building it: an item of

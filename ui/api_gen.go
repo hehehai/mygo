@@ -5188,6 +5188,21 @@ func (_handle Element) Expanded(open bool) Element {
 	return wrapElement(_node.Expanded(open))
 }
 
+// ExtendsChoice makes a click on the sidebar item with Command or Shift
+// held leave the sidebar's choice as it is, for the app to add the item
+// to a choice of several of its own, as Finder's ⌘-click and ⇧-click
+// extend a selection: Clicked and ClickModifiers report the click. A click
+// without them chooses the item as before.
+func (_handle Element) ExtendsChoice() Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.ExtendsChoice())
+}
+
 // FileDragOver reports whether files dragged from another app are over
 // the element, which takes them if they are dropped, for showing it would.
 func (_handle Element) FileDragOver() bool {

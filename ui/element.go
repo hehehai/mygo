@@ -718,6 +718,9 @@ type node struct {
 	// marks one with children.
 	level      int
 	expandable bool
+	// extendsChoice marks a sidebar item whose clicks with Command or
+	// Shift leave the sidebar's choice to the app (ExtendsChoice).
+	extendsChoice bool
 	// chooseMany marks a GridView choosing several items, or an element
 	// whose items are (Multiselectable), and gridFit is how many columns
 	// a GridView's items took.
