@@ -1318,6 +1318,27 @@ func TestRegisterFont(t *testing.T) {
 	}
 }
 
+// The rendering SetDefaultFontRendering sets is that of the systems New
+// makes from then on, as a Recorder's.
+func TestDefaultFontRenderingOfNewSystems(t *testing.T) {
+	prev := defaultRendering.Load()
+	t.Cleanup(func() { defaultRendering.Store(prev) })
+	defaultRendering.Store(nil)
+	if s := New(); s.rendering != nil {
+		t.Errorf("without a default: rendering %v", *s.rendering)
+	}
+	defaultRendering.Store(&[3]string{"gray", "none", ""})
+	s := New()
+	if s.rendering == nil || *s.rendering != [3]string{"gray", "none", ""} {
+		t.Fatalf("rendering %v, want the default", s.rendering)
+	}
+	// Each its own: setting one's leaves the default.
+	s.SetFontRendering("subpixel", "full", "rgb")
+	if r := *New().rendering; r != [3]string{"gray", "none", ""} {
+		t.Errorf("a new system's rendering %v after another set its own", r)
+	}
+}
+
 // An app's fonts (RegisterAppFont) reach Shared and every System New
 // makes, as a Tester's window has: one made before them takes them at its
 // next layout, one made after before its first. Go Mono is monospaced, so

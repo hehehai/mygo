@@ -81,6 +81,20 @@ type Glyph struct {
 	y float32
 }
 
+// SetFontRendering sets how text is rasterized and laid out where the
+// system's text stack does not know the desktop's settings, as Pango on
+// Linux, for the text Shape measures and every window and Recorder made
+// from now on (until a window takes the desktop's): antialiasing
+// ("none", "gray" or "subpixel"), hinting ("none", "slight", "medium" or
+// "full") and the order of the screen's subpixels ("rgb", "bgr", "vrgb"
+// or "vbgr"), "" for the default. Hinting "none" lays text out unhinted,
+// in fractions of a pixel, as browsers and Core Text do: text measures
+// alike on every system and glides as it moves, as videos want. Other
+// text stacks ignore it.
+func SetFontRendering(antialias, hinting, subpixels string) {
+	text.SetDefaultFontRendering(antialias, hinting, subpixels)
+}
+
 // Shape shapes s in font f, on one line, for Painter.Glyphs: the
 // system's text engine finds the font, falls back to others for what it
 // lacks, and applies ligatures and kerning. Unlike the text of elements,

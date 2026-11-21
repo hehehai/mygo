@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unsafe"
 
@@ -539,7 +540,7 @@ type cached struct {
 var shared = sync.OnceValue(newSystem)
 
 func newSystem() *System {
-	return &System{
+	s := &System{
 		fonts:     map[Style]*Font{},
 		layouts:   map[Params]*cached{},
 		marks:     map[markKey]float32{},
@@ -554,6 +555,24 @@ func newSystem() *System {
 		// transparent texel until one asks for room.
 		ColorAtlas: scene.NewAtlas(4, 1, 1),
 	}
+	if r := defaultRendering.Load(); r != nil {
+		c := *r
+		s.rendering = &c
+	}
+	return s
+}
+
+// defaultRendering is the rendering of the systems made from now on
+// (SetDefaultFontRendering), nil for the engines' own.
+var defaultRendering atomic.Pointer[[3]string]
+
+// SetDefaultFontRendering sets the rendering (SetFontRendering) of the
+// shared system and of the systems made from now on, as windows' and
+// recorders' are, until a window takes the desktop's.
+func SetDefaultFontRendering(antialias, hinting, subpixels string) {
+	r := [3]string{antialias, hinting, subpixels}
+	defaultRendering.Store(&r)
+	Shared().SetFontRendering(antialias, hinting, subpixels)
 }
 
 // Shared returns the process-wide text system.

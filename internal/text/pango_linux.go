@@ -61,6 +61,7 @@ const (
 	cairoHintStyleSlight       = 2
 	cairoHintStyleMedium       = 3
 	cairoHintStyleFull         = 4
+	cairoHintMetricsOff        = 1
 	cairoHintMetricsOn         = 2
 	cairoStatusSuccess         = 0
 	fcResultMatch              = 0
@@ -451,18 +452,25 @@ func (e *pangoEngine) setFontRendering(antialias, hinting, subpixels string) {
 
 // applyOptions gives the context GTK's font options for labels: the
 // desktop's antialiasing, hint style and subpixel order, metrics hinted
-// to whole pixels, and glyphs on whole pixels.
+// to whole pixels, and glyphs on whole pixels. Unhinted ("none"), text
+// is laid out as browsers and Core Text lay it out, in fractions of a
+// pixel: advances unhinted, glyphs where they fall, so that it measures
+// alike on every system and glides as it scales and moves (videos).
 func (e *pangoEngine) applyOptions() {
 	l := &pangoLib
+	metrics, round := cairoHintMetricsOn, gTrue
+	if e.hintStyle == cairoHintStyleNone {
+		metrics, round = cairoHintMetricsOff, gFalse
+	}
 	opts := l.cairoFontOptionsCreate()
 	l.cairoFontOptionsAntialias(opts, e.antialias)
 	l.cairoFontOptionsHintStyle(opts, e.hintStyle)
 	l.cairoFontOptionsSubpixel(opts, e.subpixels)
-	l.cairoFontOptionsHintMets(opts, cairoHintMetricsOn)
+	l.cairoFontOptionsHintMets(opts, int32(metrics))
 	l.contextSetFontOptions(e.context, opts)
 	l.cairoFontOptionsDestroy(opts)
 	if l.contextSetRoundPositions != nil {
-		l.contextSetRoundPositions(e.context, int32(gTrue))
+		l.contextSetRoundPositions(e.context, int32(round))
 	}
 }
 
