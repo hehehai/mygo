@@ -341,3 +341,50 @@ func TestTesterAccessLandmarks(t *testing.T) {
 		}
 	}
 }
+
+// TestTesterAccessTree checks that what assistive technology sees tells
+// where each element is in the tree (Parent, Depth) and whether it takes a
+// press, as tests that walk a whole view need.
+func TestTesterAccessTree(t *testing.T) {
+	on := false
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Column(c).Role(ui.RoleGroup).Label("Tools").Children(func() {
+			ui.Button(c.Key("save"), "Save")
+			ui.Checkbox(c.Key("wrap"), &on, "Wrap")
+			ui.Text(c, "Ready")
+		})
+	}, 300, 200)
+	tt.Frame()
+	all := tt.AccessAll()
+	index := func(role ui.Role, name string) int {
+		t.Helper()
+		i := slices.IndexFunc(all, func(a ui.AccessInfo) bool { return a.Role == role && a.Name == name })
+		if i < 0 {
+			t.Fatalf("no %d named %q in %+v", role, name, all)
+		}
+		return i
+	}
+	tools := index(ui.RoleGroup, "Tools")
+	for _, c := range []struct {
+		role      ui.Role
+		name      string
+		pressable bool
+	}{{ui.RoleButton, "Save", true}, {ui.RoleCheckBox, "Wrap", true}, {ui.RoleText, "Ready", false}} {
+		a := all[index(c.role, c.name)]
+		if a.Parent != tools || a.Depth != all[tools].Depth+1 || a.Pressable != c.pressable {
+			t.Errorf("%s: parent %d, depth %d, pressable %v; want parent %d (Tools), depth %d, pressable %v",
+				c.name, a.Parent, a.Depth, a.Pressable, tools, all[tools].Depth+1, c.pressable)
+		}
+	}
+	for i, a := range all {
+		switch {
+		case a.Parent < 0 && a.Depth != 0, a.Parent >= i:
+			t.Errorf("%d %q: parent %d, depth %d", i, a.Name, a.Parent, a.Depth)
+		case a.Parent >= 0 && a.Depth != all[a.Parent].Depth+1:
+			t.Errorf("%d %q: depth %d under a parent of depth %d", i, a.Name, a.Depth, all[a.Parent].Depth)
+		}
+	}
+	if save, _ := tt.Access("Save"); save.Parent != tools || !save.Pressable {
+		t.Errorf("Access(Save) = %+v", save)
+	}
+}

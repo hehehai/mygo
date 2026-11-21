@@ -21,6 +21,13 @@ type AccessInfo struct {
 	RoleDescription string
 	// Bounds is the element's visible box, in the window's DIPs as Find's.
 	Bounds Rect
+	// Parent is the index of the element's parent in what AccessAll
+	// returns (a parent comes before its children), -1 at the top, and
+	// Depth how deep the element is in the tree, 0 at the top.
+	Parent, Depth int
+	// Pressable is set on an element assistive technology can press, as
+	// a button, a link or a check box.
+	Pressable bool
 	// Checked is set on a check box, switch, radio button or menu item
 	// that is on, and on a toggle button pressed (aria-checked,
 	// aria-pressed); Mixed in its place on one partly on.
@@ -187,6 +194,12 @@ func (t *Tester) accessEach(fn func(r Role, n *platform.AccessNode, info func() 
 	if root := t.rt.c.root; root != nil {
 		walk(root)
 	}
+	depth := make([]int, len(tree.Nodes))
+	for i := range tree.Nodes {
+		if p := tree.Nodes[i].Parent; p >= 0 && p < i {
+			depth[i] = depth[p] + 1
+		}
+	}
 	for i := range tree.Nodes {
 		n := &tree.Nodes[i]
 		r, ok := given[n.ID]
@@ -198,6 +211,7 @@ func (t *Tester) accessEach(fn func(r Role, n *platform.AccessNode, info func() 
 		}
 		info := func() AccessInfo {
 			a := accessInfoOf(r, n, tree.Focus)
+			a.Depth = depth[i]
 			names := func(ids []uint64) []string {
 				var out []string
 				for _, id := range ids {
@@ -258,6 +272,8 @@ func accessInfoOf(r Role, n *platform.AccessNode, focus uint64) AccessInfo {
 		Placeholder:     n.Placeholder,
 		RoleDescription: n.RoleDescription,
 		Bounds:          Rect{float32(b.X), float32(b.Y), float32(b.W), float32(b.H)},
+		Parent:          n.Parent,
+		Pressable:       n.Actions&platform.ActionPress != 0,
 		Checked:         s&platform.AccessChecked != 0 && !chosen,
 		Mixed:           s&platform.AccessMixed != 0,
 		Expanded:        s&platform.AccessExpanded != 0,
