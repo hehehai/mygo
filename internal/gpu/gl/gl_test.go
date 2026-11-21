@@ -9,6 +9,7 @@ import (
 
 	"github.com/egoist/mygo/internal/gpu/gputest"
 	"github.com/egoist/mygo/internal/raster"
+	"github.com/egoist/mygo/internal/scene"
 )
 
 // apis are the APIs the renderer draws with: OpenGL 3.3 and OpenGL ES 3.0.
@@ -181,6 +182,30 @@ func TestDrawsVideoAsTheCPURenderer(t *testing.T) {
 							panic("a frame of video drew from RGBA, not its planes")
 						}
 					}
+				}
+			}
+		})
+	}
+}
+
+// TestPosedDrawsAsTheCPURenderer: a posed card (scaled and moved), whose
+// clips the builder cuts in the shader in the frame, not with masks.
+func TestPosedDrawsAsTheCPURenderer(t *testing.T) {
+	for _, api := range apis {
+		t.Run(api.name, func(t *testing.T) {
+			s := gputest.PosedScene()
+			read := offscreen(t, api.es, s.Width, s.Height)
+			r, err := New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Release()
+			for _, s := range []*scene.Scene{s, gputest.Transformed(s)} {
+				for range 2 {
+					if err := r.Render(s); err != nil {
+						t.Fatal(err)
+					}
+					gputest.Compare(t, "gl-posed", read(), s.Width*4, s)
 				}
 			}
 		})

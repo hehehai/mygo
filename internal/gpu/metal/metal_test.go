@@ -217,6 +217,14 @@ func TestDrawsAsTheCPURenderer(t *testing.T) {
 		t.Fatal(err)
 	}
 	gputest.Compare(t, "metal-continuous", pix, s.Width*4, s)
+	// A posed card: its clips cut in the shader in the frame.
+	for _, s := range []*scene.Scene{gputest.PosedScene(), gputest.Transformed(gputest.PosedScene())} {
+		pix, err := r.renderOffscreen(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gputest.Compare(t, "metal-posed", pix, s.Width*4, s)
+	}
 }
 
 // The CPU presenter starts without drawing resources; the first GPU
@@ -614,6 +622,7 @@ func identityCases() []gputest.CullCase {
 		{Name: "window fills", Scene: gputest.FillScene(3456, 2000)}, {Name: "odd window fills", Scene: gputest.FillScene(2049, 1031)},
 		{Name: "reference scene", Scene: gputest.Scene()}, {Name: "transformed scene", Scene: gputest.TransformedScene()},
 		{Name: "perspective scene", Scene: gputest.PerspectiveScene()}, {Name: "axis clip scene", Scene: gputest.AxisClipScene()},
+		{Name: "posed scene", Scene: gputest.PosedScene()},
 		{Name: "continuous scene", Scene: gputest.ContinuousScene()},
 		{Name: "canvas scene", Scene: gputest.CanvasScene()}}
 	cases = append(cases, gputest.CullCases()...)

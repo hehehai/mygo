@@ -1005,7 +1005,7 @@ func (p *Painter) textForeground(l *text.Layout, x, y float32, color Color, ts t
 	sys := p.rt.text
 	deco := decoration{underline: ts.underline, wavy: ts.wavy, dotted: ts.dotted, strike: ts.strike, solid: ts.solid, color: ts.decoColor, thick: ts.decoThick,
 		offset: ts.decoOffset, hasOffset: ts.set&setDecoOffset != 0}
-	shade := text.ShadeOf(color.R, color.G, color.B)
+	shade := p.shadeOf(color)
 	// Inline transforms do not change while the text paints; look for them once.
 	moves := p.inlineTransforms()
 	clips := !p.transform.Set && !moves
@@ -1055,7 +1055,7 @@ func (p *Painter) textForeground(l *text.Layout, x, y float32, color Color, ts t
 					if glyphColor.A == 0 {
 						continue // faded out, or hidden: its advance stays
 					}
-					glyphShade = text.ShadeOf(glyphColor.R, glyphColor.G, glyphColor.B)
+					glyphShade = p.shadeOf(glyphColor)
 				}
 			}
 			gi := sys.Glyph(g.Font, g.ID, s, pen, glyphShade, p.opaque && !moves)
@@ -1118,7 +1118,7 @@ func (p *Painter) textStrokes(l *text.Layout, x, y float32, color Color, ts text
 	sys := p.rt.text
 	gs := p.glyphSpace(l, x, y, moves)
 	s := gs.scale
-	shade := text.ShadeOf(color.R, color.G, color.B)
+	shade := p.shadeOf(color)
 	start := int32(len(p.s.Glyphs))
 	for li := range l.Lines {
 		line := &l.Lines[li]
@@ -1136,7 +1136,7 @@ func (p *Painter) textStrokes(l *text.Layout, x, y float32, color Color, ts text
 			if sp != nil {
 				k := sp.at(g.Cluster)
 				if c := sp.color(k, color); c != color {
-					glyphShade = text.ShadeOf(c.R, c.G, c.B)
+					glyphShade = p.shadeOf(c)
 				}
 				width, stroke = sp.stroke(k, width, stroke)
 			}
@@ -1188,7 +1188,7 @@ func (p *Painter) textShadows(l *text.Layout, x, y float32, color Color, ts text
 	sys := p.rt.text
 	gs := p.glyphSpace(l, x, y, moves)
 	s := gs.scale
-	shade := text.ShadeOf(color.R, color.G, color.B)
+	shade := p.shadeOf(color)
 	start := int32(len(p.s.Glyphs))
 	for li := range l.Lines {
 		line := &l.Lines[li]
@@ -1205,7 +1205,7 @@ func (p *Painter) textShadows(l *text.Layout, x, y float32, color Color, ts text
 					continue // faded out, or hidden, with its glyph
 				}
 				if c != color {
-					glyphShade = text.ShadeOf(c.R, c.G, c.B)
+					glyphShade = p.shadeOf(c)
 				}
 				sh = sp.shadow(k, sh)
 			}

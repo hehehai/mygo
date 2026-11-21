@@ -18,6 +18,12 @@ import (
 	"github.com/egoist/mygo/internal/scene"
 )
 
+// variations is an engine that registers a variable font at a point of
+// its axes (Core Text); the others register its default instance.
+type variations interface {
+	registerVariation(data []byte, family string, axes map[string]float64) error
+}
+
 // An engine is the system's own text stack: DirectWrite on Windows, Core
 // Text on macOS and Pango on Linux. It finds fonts, falling back to the
 // system's choices for what a font lacks, shapes and breaks paragraphs

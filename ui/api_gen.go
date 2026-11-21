@@ -540,6 +540,18 @@ func (_handle *Context) OpenURLThen(url string, done func(err error)) {
 	_ctx.OpenURLThen(url, done)
 }
 
+// PixelScale is how many of the screen's pixels a DIP of the content takes
+// where the window is (2 on a Retina display, 1 on others, times the
+// content's zoom, SetZoom): for decoding bitmaps to the pixels they show
+// at, as thumbnails decoded to their cells.
+func (_handle *Context) PixelScale() float32 {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return 0
+	}
+	return _ctx.PixelScale()
+}
+
 // Preferences returns the settings of the desktop that controls follow.
 // A frame follows their changes.
 func (_handle *Context) Preferences() Preferences {
@@ -3654,6 +3666,35 @@ func (_handle Element) AlignContent(a Align) Element {
 	_ctx := _node.c
 	_ = _ctx
 	return wrapElement(_node.AlignContent(a))
+}
+
+// AlignFirstLines lines up the first lines of text of a row's children,
+// as a Field in a Form does its label's and its control's: each child,
+// laid out as AlignItems places it, moves down until its first line's
+// baseline is the lowest's. A child without text, as an icon button
+// after a label, a switch or a slider, is centered on the others' first
+// line (on the middle of its ascent and descent, the middle of the
+// line), so it stays beside the first line when the label wraps; a
+// column whose first child is a control lines up by it, as a switch
+// above its description. Use it with AlignItems Start. Unlike AlignItems
+// Baseline, which lines up the bottoms of children without text, it
+// centers them on the line.
+//
+//	ui.Row(c).AlignItems(ui.Start).AlignFirstLines().Children(func() {
+//		ui.Text(c, "Offline Mode:")
+//		ui.Column(c).Children(func() {
+//			ui.Switch(c, &app.offline)
+//			ui.Text(c, "Your groups see you as offline.")
+//		})
+//	})
+func (_handle Element) AlignFirstLines() Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.AlignFirstLines())
 }
 
 // AlignItems places the children across the main axis.

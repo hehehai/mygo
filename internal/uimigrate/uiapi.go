@@ -132,6 +132,7 @@ var elementChains = map[string]bool{
 	"AccessSelected":       true,
 	"ActiveDescendant":     true,
 	"AlignContent":         true,
+	"AlignFirstLines":      true,
 	"AlignItems":           true,
 	"AlignSelf":            true,
 	"AnimatePose":          true,

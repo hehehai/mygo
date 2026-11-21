@@ -1424,3 +1424,123 @@ func TestMovedClipStaysInTheShader(t *testing.T) {
 		t.Fatalf("clip %v, mask mode %v", in.Clip, in.Transform1[3])
 	}
 }
+
+func TestPosedClipsCutInTheShader(t *testing.T) {
+	// A card an animation poses each frame (scaled and moved): its rounded
+	// clip and the hard clip in it are the rectangles they map to, cut in
+	// the shader; no frame rasterizes a mask. A picture zoomed within it,
+	// a transform of its own, keeps the card's corners with masks; so does
+	// a card turned, or scaled more one way than the other with rounded
+	// corners.
+	posed := func(m scene.Affine, zoomed bool) *scene.Scene {
+		s := gputest.PosedScene()
+		var ops []scene.Op
+		for _, op := range s.Ops {
+			if op.Transform.Set {
+				zoom := op.Transform != s.Ops[2].Transform
+				if zoom && !zoomed {
+					continue
+				}
+				if !zoom {
+					op.Transform = m
+				}
+			}
+			ops = append(ops, op)
+		}
+		s.Ops = ops
+		return s
+	}
+	var b Builder
+	defer b.Release()
+	rasterized := 0
+	build := func(s *scene.Scene) {
+		b.Build(s, func(*scene.Image) uintptr { rasterized++; return 1 })
+	}
+	for i := range 5 {
+		k := 0.4 + 0.1*float32(i)
+		build(posed(scene.Translation(30+5*float32(i), 20).Mul(scene.Scaling(k, k)), false))
+		if rasterized != 0 {
+			t.Fatalf("frame %d: rasterized %d clip masks for a posed card", i, rasterized)
+		}
+	}
+	// The last frame: scale 0.8 about (50, 20); the hard clip {41 81 320
+	// 200} in the frame, the card's {21 21 360 280} rounded by 16.
+	var hard, card bool
+	for _, in := range b.Instances {
+		if in.Transform1[3] != 0 && in.Transform1[3] != 3 {
+			t.Fatalf("an instance is masked (mode %v)", in.Transform1[3])
+		}
+		switch {
+		case near4(in.Clip, [4]float32{50 + 0.8*41, 20 + 0.8*81, 0.8 * 320, 0.8 * 200}):
+			hard = in.ClipRadii == [4]float32{}
+		case near4(in.Clip, [4]float32{50 + 0.8*21, 20 + 0.8*21, 0.8 * 360, 0.8 * 280}):
+			card = near4(in.ClipRadii, [4]float32{0.8 * 16, 0.8 * 16, 0.8 * 16, 0.8 * 16})
+		}
+	}
+	if !hard || !card {
+		t.Fatalf("clips in the frame: hard %v, card %v", hard, card)
+	}
+	for _, c := range []struct {
+		name string
+		s    *scene.Scene
+	}{
+		{"turned", posed(scene.Translation(40, 24).Mul(scene.Rotation(2)), false)},
+		{"stretched", posed(scene.Translation(40, 24).Mul(scene.Scaling(0.5, 0.6)), false)},
+	} {
+		rasterized = 0
+		build(c.s)
+		if rasterized == 0 {
+			t.Errorf("%s: no clip mask", c.name)
+		}
+	}
+	// A picture zoomed within the card, a transform of its own, is cut by
+	// the clips around it in the frame: the hard clip, which keeps it
+	// from the card's corners, as upstream's analytic clips cut scaled
+	// content in a stationary clip; masked if they could not.
+	rasterized = 0
+	zoomed := posed(scene.Translation(40, 24).Mul(scene.Scaling(0.5, 0.5)), true)
+	build(zoomed)
+	if rasterized == 0 {
+		hard := [4]float32{40 + 0.5*41, 24 + 0.5*81, 0.5 * 320, 0.5 * 200}
+		checked := 0
+		for i, op := range zoomed.Ops {
+			if !op.Transform.Set || op.Transform == zoomed.Ops[2].Transform || op.Kind != scene.OpFill {
+				continue
+			}
+			end := len(b.Instances)
+			if i+1 < len(b.OpStart) {
+				end = int(b.OpStart[i+1])
+			}
+			for _, in := range b.Instances[b.OpStart[i]:end] {
+				checked++
+				if !near4(in.Clip, hard) || in.ClipRadii != [4]float32{} {
+					t.Errorf("zoomed: unmasked, its clip %v radii %v, not the hard clip %v", in.Clip, in.ClipRadii, hard)
+				}
+			}
+		}
+		if checked == 0 {
+			t.Error("zoomed: no instance of the zoomed picture")
+		}
+	}
+	// Stretched, a clip with square corners is still a rectangle.
+	s := &scene.Scene{Width: 200, Height: 200, Ops: []scene.Op{
+		{Kind: scene.OpPushClip, Rect: scene.Rect{W: 100, H: 100}, Transform: scene.Scaling(0.5, 1.5)},
+		{Kind: scene.OpFill, Rect: scene.Rect{W: 100, H: 100}, Color: scene.Color{A: 255}, Transform: scene.Scaling(0.5, 1.5)},
+		{Kind: scene.OpPopClip},
+	}}
+	rasterized = 0
+	build(s)
+	if rasterized != 0 || b.Instances[0].Clip != [4]float32{0, 0, 50, 150} {
+		t.Errorf("stretched square clip: %d masks, clip %v", rasterized, b.Instances[0].Clip)
+	}
+}
+
+// near4 reports whether a and b differ by at most 1e-3 each.
+func near4(a, b [4]float32) bool {
+	for i := range a {
+		if a[i]-b[i] > 1e-3 || b[i]-a[i] > 1e-3 {
+			return false
+		}
+	}
+	return true
+}

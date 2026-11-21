@@ -1381,6 +1381,25 @@ func TestReleasedEngineReused(t *testing.T) {
 	}
 }
 
+// TestRegisterFontVariationStatic: a static font (or an engine without
+// variable fonts) registers as RegisterFont would; a variation needs a
+// family of its own.
+func TestRegisterFontVariationStatic(t *testing.T) {
+	s := newSystem()
+	if err := s.RegisterFontVariation(goregular.TTF, "MyGo Test Variation", map[string]float64{"wght": 700}); err != nil {
+		t.Fatal(err)
+	}
+	font := func(family string) *Font {
+		return s.Layout(Params{Text: "Hello", Style: Style{Size: 20, Family: family}}).Lines[0].Glyphs[0].Font
+	}
+	if font("MyGo Test Variation") == font("") {
+		t.Error("text does not use the registered font")
+	}
+	if err := s.RegisterFontVariation(goregular.TTF, "", nil); err == nil {
+		t.Error("no family")
+	}
+}
+
 // An app's fonts (RegisterAppFont) reach Shared and every System New
 // makes, as a Tester's window has: one made before them takes them at its
 // next layout, one made after before its first. Go Mono is monospaced, so
@@ -2427,4 +2446,39 @@ func sameLayout(a, b *Layout) bool {
 		}
 	}
 	return true
+}
+
+// TestFlatCachedApart keeps Flat glyphs of a shaded font apart from its
+// glyphs of each shade in the cache, so that windows drawing without font
+// smoothing (ui.Content.FontSmoothing) leave the others' text as it is.
+func TestFlatCachedApart(t *testing.T) {
+	s := newSystem()
+	l := s.Layout(Params{Text: "O", Style: Style{Size: 13}})
+	g := l.Lines[0].Glyphs[0]
+	shaded := *g.Font
+	shaded.shaded = true
+	keys := map[Shade]glyphKey{}
+	for _, shade := range []Shade{0, Shades - 1, Flat} {
+		n := len(s.glyphs)
+		s.Glyph(&shaded, g.ID, 2, 0, shade, false)
+		if len(s.glyphs) != n+1 {
+			t.Fatalf("shade %d: %d glyphs cached, want %d", shade, len(s.glyphs), n+1)
+		}
+		for k := range s.glyphs {
+			if k.shade == shade {
+				keys[shade] = k
+			}
+		}
+	}
+	if keys[Flat] == keys[Shades-1] || keys[Flat] == keys[0] {
+		t.Errorf("Flat glyphs share a key with a shade: %v", keys)
+	}
+	// Again: each comes from the cache.
+	n := len(s.glyphs)
+	for _, shade := range []Shade{Flat, Shades - 1, 0} {
+		s.Glyph(&shaded, g.ID, 2, 0, shade, false)
+	}
+	if len(s.glyphs) != n {
+		t.Errorf("drawing the glyphs again cached %d more", len(s.glyphs)-n)
+	}
 }

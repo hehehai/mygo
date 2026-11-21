@@ -170,6 +170,7 @@ func (r *Renderer) chromaTexture(img *scene.Image) uintptr {
 // made, and those wrapping a CVPixelBuffer once the frames in flight,
 // which may read them, completed.
 func (r *Renderer) dropTexture(t *texture) {
+	r.count(t, 0)
 	if t.cv != [2]uintptr{} {
 		for _, c := range t.cv {
 			if c != 0 {

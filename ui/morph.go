@@ -386,6 +386,9 @@ func (p *Painter) morph(e *node, r *contentRec, x, y float32, ts textStyle, span
 		if alpha <= 0.001 || size <= 0 {
 			return
 		}
+		if p.rt.unsmoothed {
+			shade = text.Flat // Content.FontSmoothing
+		}
 		pen, base := rx*s, ry*s
 		origin, baseline := sys.Origin(g.Font, s, pen, p.opaque), sys.Baseline(base)
 		// Drawn near the size it shows, a quarter of an octave apart, so

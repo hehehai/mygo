@@ -92,6 +92,7 @@ func TestFramesRedrawOnlyWhatChanged(t *testing.T) {
 		s := &tt.rt.scene
 		full.Resize(s.Width, s.Height)
 		raster.Render(full, s)
+		tt.Image() // drawn when asked for
 		if !bytes.Equal(tt.h.img.Image.Pix, full.Pix) {
 			t.Fatalf("after %s, the frame differs from a whole drawing", what)
 		}

@@ -23,6 +23,23 @@ import (
 // mygo.WindowOptions.Content. Create it with View.
 type Content struct {
 	view func(*context)
+	// unsmoothed is FontSmoothing(false).
+	unsmoothed bool
+}
+
+// FontSmoothing turns font smoothing off (or back on) for the text of the
+// windows showing the content. On macOS, Core Text's font smoothing, on
+// while the user leaves it on, emboldens glyphs, the more the lighter the
+// text; AppKit applies it to text over an opaque background. Text over a
+// window's material or a transparent window, as a floating HUD's, can
+// turn it off to draw as thin as text styled -webkit-font-smoothing:
+// antialiased (Font.Antialiased, for every text of the window). Thickened
+// glyphs (Font.Thicken) stay thick. Other platforms, which do not smooth
+// fonts this way, ignore it. Set it before the content is attached to a
+// window.
+func (v *Content) FontSmoothing(on bool) *Content {
+	v.unsmoothed = !on
+	return v
 }
 
 // View returns the content of a window whose user interface view builds,
@@ -42,6 +59,18 @@ func coreView(view func(c *context)) *Content { return &Content{view: view} }
 // of their own family. A Tester's window draws them too.
 func RegisterFont(data []byte, family string) error {
 	return text.RegisterAppFont(data, family)
+}
+
+// RegisterFontVariation adds a variable font (TrueType or OpenType with
+// fvar) at a point of its axes — OpenType tags and values, as "wght" 700
+// or "wdth" 75: a named instance of it, or any other — as family, which
+// it must name and which then draws that instance alone, apart from the
+// font's own family. On macOS (Core Text); elsewhere it registers the
+// default instance, as RegisterFont. A font viewer registers each
+// instance it shows under a family of its own. A Tester's window draws
+// them too.
+func RegisterFontVariation(data []byte, family string, axes map[string]float64) error {
+	return text.RegisterAppFontVariation(data, family, axes)
 }
 
 // A FontFamily is a font family text can use, as FontFamilies lists it.
@@ -82,6 +111,7 @@ func FontFamilies() []FontFamily {
 func (v *Content) AttachContent(conn *surface.Conn) {
 	h := &windowHost{conn: conn}
 	rt := newRuntime(v.view, h)
+	rt.unsmoothed = v.unsmoothed
 	h.rt = rt
 	conn.Event = h.event
 	conn.ThemeChanged = func() {
@@ -533,6 +563,7 @@ func (h *windowHost) present(s *scene.Scene) {
 		if h.degraded {
 			h.path = "drawn by the GPU renderer in software"
 		}
+		h.drawLeftOut()
 		return
 	}
 	h.path = "drawn in memory"
@@ -631,6 +662,7 @@ func (h *windowHost) render(s *scene.Scene) bool {
 	for try := 0; h.gpu != nil; try++ {
 		g := h.gpu
 		h.withWindow(g)
+		applyTextureBudget(g)
 		err := g.Render(s)
 		if err == nil {
 			return true

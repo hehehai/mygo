@@ -436,6 +436,21 @@ func (e *node) theme() *Theme {
 // Size returns the size of the window's content in DIPs.
 func (c *context) Size() (width, height float32) { return c.w, c.h }
 
+// PixelScale is how many of the screen's pixels a DIP of the content takes
+// where the window is (2 on a Retina display, 1 on others, times the
+// content's zoom, SetZoom): for decoding bitmaps to the pixels they show
+// at, as thumbnails decoded to their cells.
+func (c *context) PixelScale() float32 {
+	if c.rt == nil || c.rt.host == nil {
+		return 1
+	}
+	_, _, s := c.rt.size()
+	if s <= 0 {
+		return 1
+	}
+	return s
+}
+
 // SafeArea returns how far in from each edge of the window what the system
 // draws covers it, in DIPs: a phone's bars, its cutout and the keyboard. The
 // window's root keeps its content inside them; what draws in the Overlay, as

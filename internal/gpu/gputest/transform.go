@@ -105,3 +105,36 @@ func TranslatedScenes() []*scene.Scene {
 	}
 	return ss
 }
+
+// PosedScene is a card an animation poses (AnimatePose, a hero's
+// flight: scaled and moved, nothing else): its shadow, its rounded
+// background, a rounded clip holding a header, a scroll view's hard
+// clip with a picture and text in it, and a picture zoomed within it
+// (a transform of its own, which keeps the rounded clip's corners);
+// beside it, content the pose does not move. The clips' edges fall in
+// the middle of pixels, where the CPU renderer's coverage is exact.
+func PosedScene() *scene.Scene {
+	r4 := func(r float32) [4]float32 { return [4]float32{r, r, r, r} }
+	s := &scene.Scene{Width: 320, Height: 240, Clear: scene.Color{R: 236, G: 238, B: 242, A: 255}}
+	s.MaskAtlas, s.Text, s.Glyphs = glyphContent()
+	m := scene.Translation(40, 24).Mul(scene.Scaling(0.5, 0.5))
+	zoom := m.Mul(scene.Translation(150, 150)).Mul(scene.Scaling(1.7, 1.7)).Mul(scene.Translation(-150, -150))
+	card := scene.Rect{X: 21, Y: 21, W: 360, H: 280}
+	blue, red, ink := scene.Color{R: 40, G: 60, B: 220, A: 255}, scene.Color{R: 220, G: 40, B: 40, A: 255}, scene.Color{R: 20, G: 20, B: 30, A: 255}
+	s.Ops = []scene.Op{
+		{Kind: scene.OpFill, Rect: scene.Rect{X: 200, Y: 150, W: 110, H: 80}, Radii: r4(10), Color: scene.Color{R: 90, G: 160, B: 90, A: 255}},
+		{Kind: scene.OpShadow, Rect: scene.Rect{X: card.X, Y: card.Y + 8, W: card.W, H: card.H}, Radii: r4(16), Color: scene.Color{A: 90}, Blur: 18, Cast: card, CastRadii: r4(16), Transform: m},
+		{Kind: scene.OpFill, Rect: card, Radii: r4(16), Color: scene.Color{R: 250, G: 250, B: 252, A: 255}, Border: scene.Uniform(2), BorderColor: scene.Color{A: 60}, Transform: m},
+		{Kind: scene.OpPushClip, Rect: card, Radii: r4(16), Transform: m},
+		{Kind: scene.OpFill, Rect: scene.Rect{X: 0, Y: 0, W: 400, H: 70}, Color: blue, Transform: m},
+		{Kind: scene.OpPushClip, Rect: scene.Rect{X: 41, Y: 81, W: 320, H: 200}, Transform: m},
+		{Kind: scene.OpFill, Rect: scene.Rect{X: 30, Y: 70, W: 340, H: 240}, Color: red, Transform: m},
+		{Kind: scene.OpFill, Rect: scene.Rect{X: 60, Y: 100, W: 140, H: 100}, Radii: r4(20), Color: blue, Transform: m},
+		{Kind: scene.OpGlyphs, Start: 0, End: int32(len(s.Glyphs)), Transform: m},
+		{Kind: scene.OpFill, Rect: scene.Rect{X: 220, Y: 200, W: 120, H: 90}, Radii: r4(12), Color: ink, Transform: zoom},
+		{Kind: scene.OpPopClip, Transform: m},
+		{Kind: scene.OpFill, Rect: scene.Rect{X: 300, Y: 240, W: 120, H: 120}, Color: scene.Color{R: 240, G: 180, B: 30, A: 255}, Transform: m},
+		{Kind: scene.OpPopClip, Transform: m},
+	}
+	return s
+}

@@ -135,7 +135,7 @@ func (p *Painter) Glyphs(glyphs []Glyph, x, y float32, c Color) {
 		gs = glyphSpace{scale: p.scale, q: 1}
 	}
 	s := gs.scale
-	shade := text.ShadeOf(c.R, c.G, c.B)
+	shade := p.shadeOf(c)
 	c = c.Alpha(p.opacity)
 	color := c.scene()
 	baseline := sys.Baseline(y*s + gs.dy)
@@ -219,7 +219,7 @@ func (p *Painter) TextLine(l *text.Layout, x, y float32, color func(cluster int)
 			continue
 		}
 		c := color(g.Cluster)
-		shade := text.ShadeOf(c.R, c.G, c.B)
+		shade := p.shadeOf(c)
 		gi := sys.Glyph(g.Font, g.ID, s, pen, shade, p.opaque)
 		if !gi.OK {
 			continue
@@ -267,3 +267,13 @@ func (p *Painter) Visible() Rect {
 // Scale returns how many device pixels a DIP is, for drawing that lines
 // up with the pixels of the display.
 func (p *Painter) Scale() float32 { return p.scale }
+
+// shadeOf returns the shade glyphs of text of color c are drawn in: Flat
+// in a window without font smoothing (Content.FontSmoothing), else the
+// color's.
+func (p *Painter) shadeOf(c Color) text.Shade {
+	if p.rt.unsmoothed {
+		return text.Flat
+	}
+	return text.ShadeOf(c.R, c.G, c.B)
+}

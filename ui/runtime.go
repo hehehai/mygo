@@ -121,6 +121,9 @@ type host interface {
 type engine struct {
 	// inlineRects is placeInline's scratch, kept from frame to frame.
 	inlineRects []text.Rect
+	// unsmoothed draws the window's text without font smoothing
+	// (Content.FontSmoothing).
+	unsmoothed bool
 	// byPosition holds the keys whose press stood for its physical key
 	// (keyDownPhysical), until their release does the same.
 	byPosition      map[Key]bool

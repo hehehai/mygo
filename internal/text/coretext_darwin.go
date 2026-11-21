@@ -115,6 +115,7 @@ var ct struct {
 	descriptorMatching    func(desc, mandatory uintptr) uintptr
 	descriptorAttribute   func(desc, name uintptr) uintptr
 	descriptorsFromData   func(data uintptr) uintptr
+	variationCopy         func(desc, axis uintptr, value float64) uintptr // CTFontDescriptorCreateCopyWithVariation, optional
 	availableFamilyNames  func() uintptr
 	fontGetAscent         func(font uintptr) float64
 	fontGetDescent        func(font uintptr) float64
@@ -299,6 +300,9 @@ func loadCoreText() error {
 	// Optional: adding fonts from memory (macOS 10.13), sRGB by name.
 	if sym, err := purego.Dlsym(text, "CTFontManagerCreateFontDescriptorsFromData"); err == nil && sym != 0 {
 		purego.RegisterFunc(&ct.descriptorsFromData, sym)
+	}
+	if sym, err := purego.Dlsym(text, "CTFontDescriptorCreateCopyWithVariation"); err == nil && sym != 0 {
+		purego.RegisterFunc(&ct.variationCopy, sym)
 	}
 	if sym, err := purego.Dlsym(cg, "CGColorSpaceCreateWithName"); err == nil && sym != 0 {
 		purego.RegisterFunc(&ct.colorSpaceWithName, sym)
@@ -1699,6 +1703,44 @@ func monospacedFamily(family string) bool {
 }
 
 func (e *coreText) register(data []byte, family string) error {
+	return e.registerFaces(data, family, nil)
+}
+
+// registerVariation registers data's faces at the axes' point, under
+// family alone: a viewer's instances must not join the font's own family,
+// where a style would pick one of them.
+func (e *coreText) registerVariation(data []byte, family string, axes map[string]float64) error {
+	if ct.variationCopy == nil {
+		return e.register(data, family)
+	}
+	return e.registerFaces(data, family, axes)
+}
+
+// atVariation is desc (owned) moved to the axes' point, OpenType tags of
+// four letters: a new descriptor for each axis, the one before released.
+func atVariation(desc uintptr, axes map[string]float64) uintptr {
+	tags := make([]string, 0, len(axes))
+	for tag := range axes {
+		if len(tag) == 4 {
+			tags = append(tags, tag)
+		}
+	}
+	slices.Sort(tags)
+	for _, tag := range tags {
+		id := int32(uint32(tag[0])<<24 | uint32(tag[1])<<16 | uint32(tag[2])<<8 | uint32(tag[3]))
+		num := ct.numberCreate(0, cfNumberSInt32Type, unsafe.Pointer(&id))
+		next := ct.variationCopy(desc, num, axes[tag])
+		ct.release(num)
+		if next != 0 {
+			ct.release(desc)
+			desc = next
+		}
+	}
+	return desc
+}
+
+// registerFaces registers data's faces, at the axes' point when given.
+func (e *coreText) registerFaces(data []byte, family string, axes map[string]float64) error {
 	if ct.descriptorsFromData == nil {
 		return errors.New("mygo: adding fonts needs macOS 10.13 or later")
 	}
@@ -1717,8 +1759,11 @@ func (e *coreText) register(data []byte, family string) error {
 		return errors.New("mygo: cannot add font: not a font Core Text reads")
 	}
 	for i := range n {
-		desc := ct.arrayGetValueAtIndex(descs, i)
-		face := registeredFace{desc: ct.retain(desc)}
+		desc := ct.retain(ct.arrayGetValueAtIndex(descs, i))
+		if len(axes) > 0 {
+			desc = atVariation(desc, axes)
+		}
+		face := registeredFace{desc: desc}
 		var name string
 		if s := ct.descriptorAttribute(desc, ct.familyNameAttribute); s != 0 {
 			name = goString(s)
@@ -1745,7 +1790,8 @@ func (e *coreText) register(data []byte, family string) error {
 		// apart whichever the app registers first (#1224).
 		if gave := strings.ToLower(cmp.Or(family, name)); gave != "" {
 			e.gaveFaces[gave] = append(e.gaveFaces[gave], face)
-			if own := strings.ToLower(name); own != "" && own != gave {
+			// A variation is its family's alone (registerVariation).
+			if own := strings.ToLower(name); own != "" && own != gave && len(axes) == 0 {
 				e.ownFaces[own] = append(e.ownFaces[own], face)
 			}
 		}

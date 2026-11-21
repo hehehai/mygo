@@ -441,6 +441,11 @@ type clip struct {
 // without a mask slot or texture.
 func (b *Builder) pushed(s *scene.Scene, top *clip, op *scene.Op, i int) clip {
 	shape := scene.ClipShapeOf(op, s.Stops)
+	if r, radii, ok := frameClip(&shape); ok {
+		// Scaled and moved only: the rectangle it maps to, as a clip
+		// without a transform, which the shader cuts.
+		shape.Rect, shape.Radii, shape.Transform = r, radii, scene.Affine{}
+	}
 	rect, transform := shape.Rect, shape.Transform
 	bounds := top.bounds.Intersect(transform.Bounds(rect))
 	// The innermost clip shapes its edges in the shader, the others cut
@@ -448,7 +453,7 @@ func (b *Builder) pushed(s *scene.Scene, top *clip, op *scene.Op, i int) clip {
 	// and those inside it, with a mask of the clips, as a clip reaching
 	// into the rounded corners of one around it, which is then masked too
 	// (markEnclosing).
-	c := clip{rect: rect, radii: scene.Corners(rect, op.Radii, op.Continuous), bounds: bounds, shape: shape, maskSlot: -1}
+	c := clip{rect: rect, radii: scene.Corners(rect, shape.Radii, op.Continuous), bounds: bounds, shape: shape, maskSlot: -1}
 	c.moved = top.moved || transform.Set
 	c.masks = top.masks || shape.Masks()
 	c.masked = c.moved || c.masks || b.cuts[i] || b.encloses[i] && (top.masked || c.radii != [4]float32{})
@@ -804,11 +809,27 @@ func (b *Builder) markEnclosing(s *scene.Scene) {
 		// by, is cut as drawing that is not: no mask around it (#1002).
 		transformed := scene.Reshaped(s, op)
 		// Every clip open around it encloses it, from the innermost out to
-		// the first already marked, whose own are.
+		// the first already marked, whose own are; but a clip only scaled
+		// and moved as it is (an element posed with what it holds, as
+		// AnimatePose poses it), cut in the frame (frameClip), holds it as
+		// a clip without a transform holds what is not transformed, and
+		// the clips around that one see the clip's own transform (its
+		// push, reshaped).
+		posed := transformed && op.Transform.Set && !b.reshapesOwn(s, op)
 		for j := len(b.pushes) - 1; transformed && j >= 0 && !b.encloses[b.pushes[j]]; j-- {
+			if p := &s.Ops[b.pushes[j]]; posed && p.Transform == op.Transform {
+				if _, _, ok := frameClipOp(p); ok {
+					break
+				}
+			}
 			b.encloses[b.pushes[j]] = true
 		}
 		if op.Kind == scene.OpPushClip {
+			if o, ok := framePush(op); ok {
+				// In the frame, as pushed cuts it: a clip in it reaching
+				// into its rounded corners is masked.
+				op = &o
+			}
 			// A clip reaching into the rounded corners of one around it
 			// (#1418), which the scissor rectangles don't cut: what it
 			// holds is cut with a mask of the clips, a rectangle's being
