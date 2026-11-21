@@ -3,6 +3,7 @@
 package darwin
 
 import (
+	"math"
 	"runtime"
 	"slices"
 	"strconv"
@@ -1548,15 +1549,40 @@ func (t *tray) SetImage(png []byte, template bool) error {
 			err = errInvalidImage
 			return
 		}
-		// Menu bar icons are 18 points tall.
+		// Menu bar icons are 18 points tall, unless the image says how
+		// big it is (a PNG with its resolution, e.g. 144 dpi for 2×) and
+		// fits the menu bar.
 		size := msgSize(img, sel("size"))
-		if size.Height > 0 {
+		if w, h, ok := declaredTraySize(img, size); ok {
+			msgSetSize(img, sel("setSize:"), NSSize{w, h})
+		} else if size.Height > 0 {
 			msgSetSize(img, sel("setSize:"), NSSize{size.Width * 18 / size.Height, 18})
 		}
 		send(img, "setTemplate:", boolArg(template))
 		send(t.button, "setImage:", uintptr(img))
 	})
 	return err
+}
+
+// declaredTraySize is the size in points of a tray image whose PNG
+// declares its resolution as 2× or 3× (its pixels are 2 or 3 times its
+// size) and that is at most 22 points tall: exactly pixels / scale, so it
+// draws pixel for pixel. Images without a resolution (72 dpi, a size equal
+// to their pixels) are not declared.
+func declaredTraySize(img id, size NSSize) (w, h float64, ok bool) {
+	if size.Height <= 0 {
+		return 0, 0, false
+	}
+	rep := send(send(img, "representations"), "firstObject")
+	if rep == 0 {
+		return 0, 0, false
+	}
+	pw, ph := float64(send(rep, "pixelsWide")), float64(send(rep, "pixelsHigh"))
+	scale := math.Round(ph / size.Height)
+	if (scale != 2 && scale != 3) || math.Abs(ph/size.Height-scale) > 0.01 || ph/scale > 22 {
+		return 0, 0, false
+	}
+	return pw / scale, ph / scale, true
 }
 
 func (t *tray) SetTitle(title string) {
