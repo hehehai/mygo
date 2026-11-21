@@ -246,6 +246,9 @@ type AppHandler interface {
 	// NotificationAction reports a notification's button pressed, with the
 	// text typed when it asks for some (NotificationAction.Input).
 	NotificationAction(id, action, text string)
+	// ContinueActivity reports an activity the system asks the app to
+	// continue: one of its Spotlight results opened, a Handoff.
+	ContinueActivity(a UserActivity)
 	// MediaCommand reports a media key or a remote command for what
 	// NowPlaying shows; position is where MediaSeek asks to go.
 	MediaCommand(cmd MediaCommand, position time.Duration)
@@ -1717,4 +1720,15 @@ type TabsHandler interface {
 // window off its stack (the back button, a swipe, Android's back).
 type NavigationHandler interface {
 	Popped()
+}
+
+// UserActivity is an activity the system asks the app to continue
+// (NSUserActivity on macOS).
+type UserActivity struct {
+	Type string
+	// UserInfo holds the activity's values that are strings or numbers
+	// (as text).
+	UserInfo   map[string]string
+	WebpageURL string
+	Title      string
 }

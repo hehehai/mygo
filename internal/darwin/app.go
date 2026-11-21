@@ -377,6 +377,14 @@ func registerAppDelegate() {
 				theBackend.h.OpenURLs(links)
 			}
 		}),
+		// Spotlight results of the app opened, Handoffs (NSUserActivity).
+		method("application:willContinueUserActivityWithType:", func(self id, _ objc.SEL, app, activityType id) bool {
+			return true
+		}),
+		method("application:continueUserActivity:restorationHandler:", func(self id, _ objc.SEL, app, activity id, handler uintptr) bool {
+			theBackend.continueActivity(activity)
+			return true
+		}),
 		method("applicationSupportsSecureRestorableState:", func(self id, _ objc.SEL, app id) bool { return true }),
 		method("applicationShouldTerminateAfterLastWindowClosed:", func(self id, _ objc.SEL, app id) bool { return false }),
 		method("observeValueForKeyPath:ofObject:change:context:", func(self id, _ objc.SEL, keyPath, object, change id, ctx uintptr) {

@@ -179,6 +179,25 @@ cheap to call at every launch; `UnregisterURLScheme` and
 `IsURLSchemeRegistered` go with it. On macOS schemes must be listed in
 the configuration.
 
+### Spotlight results and Handoff
+
+On macOS an app that puts its items in Spotlight (CoreSpotlight's
+`CSSearchableItem`) hears which one the user opened through
+`App.OnContinueActivity`, registered before `Run` so it also gets the one
+the app was launched with: the activity's `Type` is
+`mygo.SpotlightActivityType` and the item's identifier is under
+`mygo.SpotlightItemIDKey` in `UserInfo`. A Handoff (an activity type the
+app lists in `NSUserActivityTypes`) comes the same way. macOS brings the
+app to the front; other platforms never call it.
+
+```go
+mygo.App.OnContinueActivity(func(a mygo.UserActivity) {
+	if a.Type == mygo.SpotlightActivityType {
+		openMessage(a.UserInfo[mygo.SpotlightItemIDKey])
+	}
+})
+```
+
 ## File associations
 
 Apps open files of their types from the file manager. Declare the types in

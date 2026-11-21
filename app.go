@@ -98,6 +98,8 @@ type Application struct {
 
 	onNotificationClick  listeners[func(string)]
 	onNotificationAction listeners[func(string, string, string)]
+
+	onContinueActivity listeners[func(UserActivity)]
 }
 
 // App is the application singleton.
@@ -842,6 +844,9 @@ func (appHandler) HotkeyPressed(id int)          { GlobalShortcut.pressed(id) }
 func (appHandler) NotificationClicked(id string) { notificationClicked(id) }
 func (appHandler) NotificationAction(id, action, text string) {
 	notificationAction(id, action, text)
+}
+func (appHandler) ContinueActivity(a platform.UserActivity) {
+	fire1(&App.onContinueActivity, userActivity(a))
 }
 
 func (appHandler) NetworkChanged(s platform.NetworkStatus) { Network.changed(networkStatus(s)) }

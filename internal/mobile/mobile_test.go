@@ -104,6 +104,7 @@ func (a *app) NetworkChanged(platform.NetworkStatus)             {}
 func (a *app) HotkeyPressed(int)                                 {}
 func (a *app) NotificationClicked(string)                        {}
 func (a *app) NotificationAction(string, string, string)         {}
+func (a *app) ContinueActivity(platform.UserActivity)            {}
 func (a *app) MediaCommand(platform.MediaCommand, time.Duration) {}
 func (a *app) MemoryWarning()                                    {}
 

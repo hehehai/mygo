@@ -567,6 +567,10 @@ func (b *Backend) PressNotificationAction(id, action, text string) {
 	b.h.NotificationAction(id, action, text)
 }
 
+// ContinueActivity reports an activity to continue (a Spotlight result
+// opened, a Handoff), as the platform does (on the main thread).
+func (b *Backend) ContinueActivity(a platform.UserActivity) { b.h.ContinueActivity(a) }
+
 // Window is a fake native window. Scripts evaluated in it are recorded.
 type Window struct {
 	b    *Backend
