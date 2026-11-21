@@ -540,6 +540,18 @@ func (_handle *Context) OpenURLThen(url string, done func(err error)) {
 	_ctx.OpenURLThen(url, done)
 }
 
+// PixelScale is how many of the screen's pixels a DIP of the content takes
+// where the window is (2 on a Retina display, 1 on others, times the
+// content's zoom, SetZoom): for decoding bitmaps to the pixels they show
+// at, as thumbnails decoded to their cells.
+func (_handle *Context) PixelScale() float32 {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return 0
+	}
+	return _ctx.PixelScale()
+}
+
 // Preferences returns the settings of the desktop that controls follow.
 // A frame follows their changes.
 func (_handle *Context) Preferences() Preferences {
