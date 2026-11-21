@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
@@ -56,6 +57,14 @@ func writeBundle(c *Config, dir, bin string, icns []byte, car *assetCatalog, res
 	}
 	if err := copyResources(res, filepath.Join(contents, "Resources")); err != nil {
 		return "", err
+	}
+	for _, r := range c.contentsResources(true) {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(contents, filepath.FromSlash(r.name))), 0o755); err != nil {
+			return "", err
+		}
+		if err := copyResources([]resource{r}, contents); err != nil {
+			return "", err
+		}
 	}
 	if err := installNative(c, app); err != nil {
 		return "", err
@@ -241,12 +250,32 @@ func compileIcon(src, minimumSystemVersion string) (*assetCatalog, error) {
 	return &assetCatalog{car, icns}, nil
 }
 
+// bundleVersion is CFBundleVersion for version: its numbers, as Apple
+// requires ("one to three period-separated integers"), without a
+// pre-release part or build metadata (1.3.0-beta.1 is 1.3.0), or version
+// itself when it has no such numbers. CFBundleShortVersionString keeps the
+// whole version, which App.Version reads and updates compare.
+func bundleVersion(version string) string {
+	v, _, _ := strings.Cut(version, "+")
+	v, _, _ = strings.Cut(v, "-")
+	fields := strings.Split(v, ".")
+	if len(fields) > 3 {
+		return version
+	}
+	for _, f := range fields {
+		if f == "" || strings.Trim(f, "0123456789") != "" {
+			return version
+		}
+	}
+	return v
+}
+
 func infoPlist(c *Config, executable, icon, iconName string) []byte {
 	d := map[string]any{
 		"CFBundleName":                         c.Name,
 		"CFBundleDisplayName":                  c.Name,
 		"CFBundleIdentifier":                   c.Identifier,
-		"CFBundleVersion":                      c.Version,
+		"CFBundleVersion":                      bundleVersion(c.Version),
 		"CFBundleShortVersionString":           c.Version,
 		"CFBundleExecutable":                   executable,
 		"CFBundlePackageType":                  "APPL",
@@ -375,9 +404,15 @@ func writePlistValue(b *bytes.Buffer, v any, indent string) {
 
 // codesignArgs returns the codesign arguments that sign path. Real
 // identities get the hardened runtime and a secure timestamp in production,
-// which notarization requires.
-func codesignArgs(path, identity, entitlements string, production bool) []string {
-	args := []string{"--force", "--deep", "--sign", identity}
+// which notarization requires. deep adds --deep, which signs the code in
+// Contents/Frameworks (native modules) again with the app's entitlements;
+// an app with macos.contents goes without, as signNestedCode signs all
+// nested code first, each with its own entitlements.
+func codesignArgs(path, identity, entitlements string, production, deep bool) []string {
+	args := []string{"--force", "--sign", identity}
+	if deep {
+		args = []string{"--force", "--deep", "--sign", identity}
+	}
 	if production && identity != "-" {
 		args = append(args, "--options", "runtime", "--timestamp")
 	}
@@ -389,7 +424,8 @@ func codesignArgs(path, identity, entitlements string, production bool) []string
 
 var errProfileAdHoc = errors.New("macos.provisioningProfile needs a signing identity, not ad-hoc signing: set macos.signingIdentity or pass -sign")
 
-// codesign signs a bundle, and the code among its resources. Signing needs
+// codesign signs a bundle, and the code among its resources and in
+// macos.contents. Signing needs
 // macOS: elsewhere only the executable's ad-hoc signature from the Go linker
 // remains.
 func codesign(c *Config, path, identity string, production bool) error {
@@ -415,7 +451,7 @@ func codesign(c *Config, path, identity string, production bool) error {
 	if entitlements != "" && c.native != nil && len(c.native.entitlements) > 0 {
 		defer os.Remove(entitlements)
 	}
-	out, err := signCode(filepath.Base(path), identity, codesignArgs(path, identity, entitlements, production)...)
+	out, err := signCode(filepath.Base(path), identity, codesignArgs(path, identity, entitlements, production, len(c.MacOS.Contents) == 0)...)
 	if err != nil {
 		return fmt.Errorf("codesign %s: %v\n%s", filepath.Base(path), err, out)
 	}
@@ -499,4 +535,41 @@ func writeUniversal(out string, slices ...string) error {
 		buf.Write(a.data)
 	}
 	return os.WriteFile(out, buf.Bytes(), 0o755)
+}
+
+// contentsResources lists macos.contents as resources of the bundle's
+// Contents, in path order, without those whose source does not exist,
+// which warn names.
+func (c *Config) contentsResources(warn bool) []resource {
+	var list []resource
+	for _, name := range slices.Sorted(maps.Keys(c.MacOS.Contents)) {
+		src := c.path(c.MacOS.Contents[name])
+		if _, err := os.Stat(src); err != nil {
+			if warn {
+				warnf("macos.contents: %s does not exist; the app has no Contents/%s", relPathTo(c.root, src), filepath.ToSlash(filepath.Clean(name)))
+			}
+			continue
+		}
+		list = append(list, resource{name: filepath.ToSlash(filepath.Clean(name)), src: src})
+	}
+	return list
+}
+
+// contentsDirs are the directories of the bundle's Contents, besides
+// Resources, whose code signNestedCode signs: the first element of each
+// path of macos.contents, and Frameworks, where native modules put their
+// libraries, which --deep would otherwise have signed.
+func (c *Config) contentsDirs() []string {
+	if len(c.MacOS.Contents) == 0 {
+		return nil
+	}
+	dirs := []string{"Frameworks"}
+	for name := range c.MacOS.Contents {
+		first, _, _ := strings.Cut(filepath.ToSlash(filepath.Clean(name)), "/")
+		if !slices.Contains(dirs, first) {
+			dirs = append(dirs, first)
+		}
+	}
+	slices.Sort(dirs)
+	return dirs
 }

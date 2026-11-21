@@ -138,3 +138,34 @@ func TestInverseFillsTooltipsAndToasts(t *testing.T) {
 		t.Errorf("a theme fills a tooltip with %v and a toast with %v, not its Inverse %v", tooltip, toast, th.Inverse)
 	}
 }
+
+// A theme set for a few widgets and set back keeps the root's own
+// background: a transparent window stays transparent around a button in
+// another accent; a root left to the theme follows it.
+func TestSetThemeKeepsRootBackground(t *testing.T) {
+	for _, own := range []bool{true, false} {
+		tt := coreNewTester(func(c *context) {
+			if own {
+				c.Root().Background(Transparent)
+			}
+			th := c.Theme()
+			ink := *th
+			ink.Accent, ink.Background = Hex("#202020"), Hex("#ff0000")
+			c.SetTheme(&ink)
+			corePrimaryButton(c, "Save").Label("save")
+			c.SetTheme(th)
+		}, 200, 100)
+		tt.Frame()
+		img := tt.Image()
+		o := img.PixOffset(190, 90)
+		got := img.Pix[o : o+4]
+		want := []uint8{0, 0, 0, 0}
+		if !own {
+			bg := LightTheme().Background
+			want = []uint8{bg.R, bg.G, bg.B, 255}
+		}
+		if string(got) != string(want) {
+			t.Errorf("own background %v: the root paints %v, not %v", own, got, want)
+		}
+	}
+}

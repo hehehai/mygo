@@ -115,6 +115,13 @@ func macType(f transfer.Format) string {
 	if t := macDragTypes[f]; t != "" {
 		return t
 	}
+	// A format named by a uniform type identifier rather than a MIME
+	// type ("com.apple.cocoa.pasteboard.color", "com.adobe.ase") is the
+	// pasteboard type itself: apps that read only such a type get it.
+	if s := string(f); !strings.Contains(s, "/") && strings.Contains(s, ".") {
+		macDragTypes[f], macDragFormats[s] = s, f
+		return s
+	}
 	var t string
 	if cls := class("UTType"); cls != 0 {
 		ut := send(cls, "typeWithMIMEType:", uintptr(nsString(string(f))))

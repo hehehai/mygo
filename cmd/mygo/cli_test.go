@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,26 @@ func TestConfigDefaults(t *testing.T) {
 		}
 		if c, err := loadConfig(root); err != nil || c.Bindings != tc.want {
 			t.Errorf("bindings with package.json %s at the root = %q, %v; want %q", tc.pkg, c.Bindings, err, tc.want)
+		}
+	}
+}
+
+func TestBundleVersion(t *testing.T) {
+	for v, want := range map[string]string{
+		"1.2.3": "1.2.3", "0.1.0-beta.1": "0.1.0", "1.2.3+42": "1.2.3", "2.0.0-rc.1+abc": "2.0.0",
+		"7": "7", "1.2": "1.2", "1.2.3.4": "1.2.3.4", "next": "next", "": "",
+	} {
+		if got := bundleVersion(v); got != want {
+			t.Errorf("bundleVersion(%q) = %q, want %q", v, got, want)
+		}
+	}
+	plist := string(infoPlist(&Config{Name: "A", Version: "0.1.0-beta.1"}, "A", "", ""))
+	for _, want := range []string{
+		"<key>CFBundleShortVersionString</key>\n\t<string>0.1.0-beta.1</string>",
+		"<key>CFBundleVersion</key>\n\t<string>0.1.0</string>",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("Info.plist has no %q", want)
 		}
 	}
 }
@@ -739,5 +760,67 @@ func TestICNSIcon(t *testing.T) {
 	c.MacOS.Icon = ""
 	if icns, err := bundleICNS(c, nil); err != nil || !bytes.HasPrefix(icns, []byte("icns")) || string(icns) == "icns drawn per size" {
 		t.Errorf("without macos.icon, the .icns is not icon's rendering: %v", err)
+	}
+}
+
+// TestBundleContents installs macos.contents beside Resources: directories
+// merge into their path, files keep their permissions, a missing source is
+// left out, and paths the packaging writes itself are refused.
+func TestBundleContents(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"vendor/bin/tool":                   "#!/bin/sh\n",
+		"vendor/lib/libtool.dylib":          "lib",
+		"vendor/README":                     "readme",
+		"build/W.appex/Contents/Info.plist": "<plist/>",
+		"build/W.appex/Contents/MacOS/W":    "code",
+		"bin":                               "app",
+	})
+	if err := os.Chmod(filepath.Join(dir, "vendor", "bin", "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Config{root: dir, Name: "A", Identifier: "com.example.a", MacOS: MacOS{Contents: map[string]string{
+		"Helpers":              "vendor/bin",
+		"Frameworks":           "vendor/lib",
+		"SharedSupport/README": "vendor/README",
+		"PlugIns/W.appex":      "build/W.appex",
+		"Library/LoginItems":   "vendor/missing",
+	}}}
+	if err := c.validate(); err != nil {
+		t.Fatal(err)
+	}
+	app, err := writeBundle(c, dir, filepath.Join(dir, "bin"), nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := filepath.Join(app, "Contents")
+	if info, err := os.Stat(filepath.Join(contents, "Helpers", "tool")); err != nil || info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("Helpers/tool: %v, %v", info, err)
+	}
+	for name, want := range map[string]string{"Frameworks/libtool.dylib": "lib", "SharedSupport/README": "readme", "PlugIns/W.appex/Contents/MacOS/W": "code"} {
+		if data, err := os.ReadFile(filepath.Join(contents, filepath.FromSlash(name))); string(data) != want {
+			t.Errorf("%s = %q, %v", name, data, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(contents, "Library")); err == nil {
+		t.Error("a missing source made Library")
+	}
+	if got := c.contentsResources(false); len(got) != 4 || got[0].name != "Frameworks" || got[3].name != "SharedSupport/README" {
+		t.Errorf("contentsResources = %+v", got)
+	}
+	if got := c.contentsDirs(); !slices.Equal(got, []string{"Frameworks", "Helpers", "Library", "PlugIns", "SharedSupport"}) {
+		t.Errorf("contentsDirs = %q", got)
+	}
+	if got := (&Config{}).contentsDirs(); got != nil {
+		t.Errorf("contentsDirs without macos.contents = %q", got)
+	}
+	for _, name := range []string{"Resources", "resources/x", "MacOS/tool", "Info.plist", "_CodeSignature", "embedded.provisionprofile", "../x", "/abs", ".", ""} {
+		c := &Config{MacOS: MacOS{Contents: map[string]string{name: "vendor/bin"}}}
+		if err := c.validate(); err == nil {
+			t.Errorf("macos.contents accepts %q", name)
+		}
+	}
+	if err := (&Config{MacOS: MacOS{Contents: map[string]string{"Helpers": ""}}}).validate(); err == nil {
+		t.Error("macos.contents accepts an empty source")
 	}
 }

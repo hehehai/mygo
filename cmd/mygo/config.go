@@ -225,6 +225,21 @@ type MacOS struct {
 	// for a helper that needs com.apple.security.cs.allow-jit under the
 	// hardened runtime. Other code keeps the entitlements it is signed with.
 	HelperEntitlements map[string]string `json:"helperEntitlements"`
+	// Contents installs files or directories of the project in the
+	// bundle's Contents, beside MacOS and Resources, by their path there:
+	// helper executables in Helpers and the libraries they link in
+	// Frameworks, where macOS and codesign expect nested code, or app
+	// extensions built elsewhere (a WidgetKit or Share .appex) in PlugIns:
+	//   "Helpers": "vendor/tool/bin", "Frameworks": "vendor/tool/lib",
+	//   "PlugIns/Widget.appex": "build/Widget.appex"
+	// A directory's contents merge into the path. A source that does not
+	// exist is left out with a warning (a build that skipped fetching it).
+	// Code there is signed like the code among the resources, before the
+	// app, which is then signed without --deep (that would sign it again
+	// with the app's entitlements); helperEntitlements names it by its path
+	// from the bundle, e.g. "Contents/Helpers/tool" or
+	// "Contents/PlugIns/Widget.appex" for an extension's App Sandbox.
+	Contents map[string]string `json:"contents"`
 	// InfoPlist holds extra keys for the Info.plist of the bundle, which
 	// replace MyGo's own, e.g. usage descriptions for apps whose pages use
 	// the camera or the microphone:
@@ -415,6 +430,14 @@ func (c *Config) validate() error {
 	for name, file := range c.MacOS.HelperEntitlements {
 		if name == "" || file == "" {
 			return fmt.Errorf("macos.helperEntitlements maps the path of code among the resources to a property list of entitlements, not %q to %q", name, file)
+		}
+	}
+	for name, src := range c.MacOS.Contents {
+		if err := validContentsPath(name); err != nil {
+			return err
+		}
+		if src == "" {
+			return fmt.Errorf("macos.contents: %q names no file of the project", name)
 		}
 	}
 	if c.Windows.Certificate != "" && c.Windows.SignCommand != "" {
@@ -783,4 +806,22 @@ func (c *Config) devIcon() string {
 		return ""
 	}
 	return dev
+}
+
+// validContentsPath checks a path of macos.contents: relative, inside the
+// bundle's Contents, and not where the packaging writes its own files.
+// Frameworks is shared: native modules put their libraries there too.
+func validContentsPath(name string) error {
+	clean := filepath.ToSlash(filepath.Clean(name))
+	first, _, _ := strings.Cut(clean, "/")
+	switch {
+	case name == "", filepath.IsAbs(name), strings.HasPrefix(name, "/"), clean == ".", clean == "..", strings.HasPrefix(clean, "../"):
+		return fmt.Errorf("macos.contents: %q is not a path inside the bundle's Contents", name)
+	}
+	for _, own := range []string{"MacOS", "Resources", "Info.plist", "PkgInfo", "_CodeSignature", "CodeResources", "embedded.provisionprofile"} {
+		if strings.EqualFold(first, own) {
+			return fmt.Errorf("macos.contents: %q is in Contents/%s, which the packaging writes (resources go in the resources directory)", name, own)
+		}
+	}
+	return nil
 }

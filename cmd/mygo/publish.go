@@ -231,7 +231,8 @@ func mergeS3Checksums(c *Config, files []string) error {
 
 // uploadHeader returns the headers of an uploaded file: its type and, for
 // the files whose names stay from version to version, that caches must
-// check them again.
+// check them again. The others are named by their version, which never
+// changes them, so caches keep them for good.
 func uploadHeader(name string) http.Header {
 	typ, ok := contentTypes[filepath.Ext(name)]
 	if !ok {
@@ -240,9 +241,14 @@ func uploadHeader(name string) http.Header {
 	h := http.Header{"Content-Type": {typ}}
 	if name == installScriptName || name == installPS1Name || name == checksumsName || strings.HasPrefix(name, "update-") && strings.HasSuffix(name, ".json") {
 		h.Set("Cache-Control", "no-cache")
+	} else {
+		h.Set("Cache-Control", immutable)
 	}
 	return h
 }
+
+// immutable is the Cache-Control of the files named by their version.
+const immutable = "public, max-age=31536000, immutable"
 
 var contentTypes = map[string]string{
 	".dmg":  "application/x-apple-diskimage",

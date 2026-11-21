@@ -15,7 +15,7 @@ func TestDataDragFormatMappings(t *testing.T) {
 	load()
 	withPool(func() {
 		registerDataDragClasses()
-		for _, f := range []transfer.Format{transfer.Text, transfer.HTML, transfer.PNG, transfer.URIList, transfer.FileList, "application/vnd.mygo.test+json"} {
+		for _, f := range []transfer.Format{transfer.Text, transfer.HTML, transfer.PNG, transfer.URIList, transfer.FileList, "application/vnd.mygo.test+json", "com.apple.cocoa.pasteboard.color"} {
 			typ := macType(f)
 			if got := macFormat(typ); got != f {
 				t.Errorf("%s -> %s -> %s", f, typ, got)
@@ -24,6 +24,9 @@ func TestDataDragFormatMappings(t *testing.T) {
 			if !sendBool(item, "setData:forType:", uintptr(nsData([]byte("a\r\nb"))), uintptr(nsString(typ))) {
 				t.Errorf("pasteboard rejected type %s", typ)
 			}
+		}
+		if typ := macType("com.apple.cocoa.pasteboard.color"); typ != "com.apple.cocoa.pasteboard.color" {
+			t.Errorf("a UTI format became %s", typ)
 		}
 		if macType(transfer.URIList) == "public.url" {
 			t.Fatal("URI lists were narrowed to a single URL")

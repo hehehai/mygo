@@ -577,6 +577,101 @@ func TestSignNestedCode(t *testing.T) {
 	}
 }
 
+// TestSignContents: with macos.contents the code in Helpers, Frameworks
+// and PlugIns is signed before the app, each keeping its own entitlements
+// or taking those of macos.helperEntitlements, and the app's signature
+// (without --deep) gives none of it the app's.
+func TestSignContents(t *testing.T) {
+	if _, err := exec.LookPath("codesign"); err != nil || runtime.GOOS != "darwin" {
+		t.Skip("needs codesign")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	app := filepath.Join(dir, "A.app")
+	contents := filepath.Join(app, "Contents")
+	sign := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("codesign", args...).CombinedOutput(); err != nil {
+			t.Fatalf("codesign %q: %v\n%s", args, err, out)
+		}
+	}
+	plist := func(key string) string {
+		return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>` + key + `</key><true/></dict></plist>
+`
+	}
+	writeFiles(t, dir, map[string]string{
+		"A.app/Contents/Info.plist":                          string(infoPlist(&Config{Name: "A", Identifier: "com.example.a"}, "A", "", "")),
+		"A.app/Contents/PlugIns/W.appex/Contents/Info.plist": string(infoPlist(&Config{Name: "W", Identifier: "com.example.a.w"}, "W", "", "")),
+		"jit.plist":     plist("com.apple.security.cs.allow-jit"),
+		"sandbox.plist": plist("com.apple.security.app-sandbox"),
+		"app.plist":     plist("com.apple.security.cs.disable-library-validation"),
+	})
+	if err := os.MkdirAll(filepath.Join(contents, "Resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"MacOS/A", "Helpers/tool", "Helpers/jit", "Frameworks/libtool.dylib", "PlugIns/W.appex/Contents/MacOS/W"} {
+		path := filepath.Join(contents, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := copyFile(exe, path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if name != "MacOS/A" {
+			sign("--remove-signature", path)
+		}
+	}
+	c := &Config{root: dir, MacOS: MacOS{
+		Entitlements: "app.plist",
+		HelperEntitlements: map[string]string{
+			"Contents/Helpers/jit":     "jit.plist",
+			"Contents/PlugIns/W.appex": "sandbox.plist",
+		},
+		// The sources are the bundle's own: only the signing is tested.
+		Contents: map[string]string{"Helpers": "A.app/Contents/Helpers", "Frameworks": "A.app/Contents/Frameworks", "PlugIns/W.appex": "A.app/Contents/PlugIns/W.appex"},
+	}}
+	if err := codesign(c, app, "-", false); err != nil {
+		t.Fatal(err)
+	}
+	details := func(path string, args ...string) string {
+		out, err := exec.Command("codesign", append(append([]string{"--display"}, args...), path)...).CombinedOutput()
+		if err != nil {
+			t.Errorf("codesign --display %s: %v\n%s", path, err, out)
+		}
+		return string(out)
+	}
+	if out, err := exec.Command("codesign", "--verify", "--deep", "--strict", app).CombinedOutput(); err != nil {
+		t.Errorf("the app does not verify: %v\n%s", err, out)
+	}
+	for _, name := range []string{"Helpers/tool", "Frameworks/libtool.dylib"} {
+		path := filepath.Join(contents, filepath.FromSlash(name))
+		if out, err := exec.Command("codesign", "--verify", "--strict", path).CombinedOutput(); err != nil {
+			t.Errorf("%s does not verify: %v\n%s", name, err, out)
+		}
+		if out := details(path, "--entitlements", "-", "--xml"); strings.Contains(out, "<key>") {
+			t.Errorf("%s has entitlements:\n%s", name, out)
+		}
+	}
+	for name, want := range map[string]string{"Helpers/jit": "allow-jit", "PlugIns/W.appex": "app-sandbox", ".": "disable-library-validation"} {
+		path := filepath.Join(contents, filepath.FromSlash(name))
+		if name == "." {
+			path = app
+		}
+		out := details(path, "--entitlements", "-", "--xml")
+		if !strings.Contains(out, want) {
+			t.Errorf("%s lacks %s:\n%s", name, want, out)
+		}
+		if name != "." && strings.Contains(out, "disable-library-validation") {
+			t.Errorf("%s has the app's entitlements:\n%s", name, out)
+		}
+	}
+}
+
 func TestNestedCodesignArgs(t *testing.T) {
 	for _, tc := range []struct {
 		identity, entitlements string

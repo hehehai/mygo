@@ -243,6 +243,17 @@ export interface MacOSConfig {
    * Other code keeps the entitlements it is signed with.
    */
   helperEntitlements?: Record<string, string>;
+  /**
+   * Files or directories of the project installed in the bundle's Contents,
+   * beside MacOS and Resources, by their path there, e.g.
+   * `{ "Helpers": "vendor/tool/bin", "Frameworks": "vendor/tool/lib" }` for a
+   * helper and the libraries it links, or
+   * `{ "PlugIns/Widget.appex": "build/Widget.appex" }` for an app extension.
+   * A missing source is left out with a warning. The code there is signed
+   * like the code among the resources (`helperEntitlements` names it
+   * `Contents/Helpers/tool`), and the app then without `--deep`.
+   */
+  contents?: Record<string, string>;
   /** Keys added to the app's Info.plist, replacing MyGo's, e.g. `NSCameraUsageDescription`. */
   infoPlist?: Record<string, unknown>;
   /** The volume name of the disk image (default: the name). */

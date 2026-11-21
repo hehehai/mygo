@@ -629,7 +629,11 @@ func (_handle *Context) SetMenuPresentation(p MenuPresentation) {
 
 // SetTheme makes the frame use t, for the window's root and the widgets
 // created after the call. Inside the children of a Themed, which keep its
-// theme, t is for the root and the widgets after the Themed.
+// theme, t is for the root and the widgets after the Themed. A background
+// or text style the view gave the root itself (such as
+// Root().Background(Transparent)) stays: a view can set a theme for a few
+// widgets and set its own back, as a primary button in another accent
+// does, without the root losing what it chose.
 func (_handle *Context) SetTheme(t *Theme) {
 	_ctx := _handle.build()
 	if _ctx == nil {
