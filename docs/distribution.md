@@ -267,6 +267,37 @@ export default defineConfig({
 </plist>
 ```
 
+### Code in Contents
+
+Some code belongs elsewhere in the bundle than its resources: a helper
+executable in `Contents/Helpers` with the libraries it links in
+`Contents/Frameworks` (found at `@executable_path/../Frameworks`), an app
+extension built with Xcode, such as a WidgetKit or Share `.appex`, in
+`Contents/PlugIns`, a login item in `Contents/Library/LoginItems`.
+`macos.contents` installs files or directories of the project there, by
+their path in `Contents`; a directory's contents merge into the path, and
+a source that does not exist is left out with a warning:
+
+```ts
+export default defineConfig({
+  macos: {
+    contents: {
+      Helpers: "vendor/ffmpeg/bin",
+      Frameworks: "vendor/ffmpeg/lib",
+      "PlugIns/Widget.appex": "build/Widget.appex",
+    },
+    helperEntitlements: { "Contents/PlugIns/Widget.appex": "Widget.entitlements" },
+  },
+});
+```
+
+The code there is signed as the code among the resources is, from the
+inside out, before the app, and `macos.helperEntitlements` names it by its
+path from the bundle (an app extension needs the App Sandbox). The app is
+then signed without `--deep`, which would sign the nested code again with
+the app's entitlements; the libraries of native modules in
+`Contents/Frameworks` are signed with the rest.
+
 ### Native libraries of packages
 
 A Go package that loads a native library with purego, as the

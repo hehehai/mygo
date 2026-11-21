@@ -978,7 +978,10 @@ func within(path, dir string) bool {
 
 // signNestedCode signs the code among the resources of a bundle, which
 // codesign --deep leaves alone: it only signs the bundle's code
-// directories, and notarization rejects unsigned code anywhere. Code is
+// directories, and notarization rejects unsigned code anywhere. With
+// macos.contents it also signs the code in the directories of Contents
+// that it fills, and in Frameworks (contentsDirs), as the app is then
+// signed without --deep; that code is named Contents/<path>. Code is
 // signed from the inside out: Mach-O files, then the bundles holding them
 // (apps, frameworks, plug-ins), whose signatures seal what they contain. A
 // real identity signs all of it in a production build. Ad hoc signing, and
@@ -989,29 +992,40 @@ func within(path, dir string) bool {
 // entitlements it is signed with, unless macos.helperEntitlements gives it
 // others.
 func signNestedCode(c *Config, app, identity string, production bool) error {
-	dir := filepath.Join(app, "Contents", "Resources")
 	type nested struct {
-		path, name string // name: the path in dir, with slashes
+		path, name string // name: the path in Resources, or Contents/… elsewhere, with slashes
 		bundle     bool
 		signed     bool // a Mach-O file with a signature
 	}
 	var files, bundles []nested
-	err := walkResource(dir, func(path string, info fs.FileInfo) error {
-		rel, _ := filepath.Rel(dir, path)
-		n := nested{path: path, name: filepath.ToSlash(rel), bundle: info.IsDir()}
-		switch {
-		case info.Mode().IsRegular():
-			var ok bool
-			if ok, n.signed = machO(path); ok {
-				files = append(files, n)
+	collect := func(dir, prefix string) error {
+		return walkResource(dir, func(path string, info fs.FileInfo) error {
+			rel, _ := filepath.Rel(dir, path)
+			n := nested{path: path, name: strings.TrimSuffix(prefix+filepath.ToSlash(rel), "/."), bundle: info.IsDir()}
+			switch {
+			case info.Mode().IsRegular():
+				var ok bool
+				if ok, n.signed = machO(path); ok {
+					files = append(files, n)
+				}
+			case info.IsDir() && isBundle(path):
+				bundles = append(bundles, n)
 			}
-		case info.IsDir() && isBundle(path):
-			bundles = append(bundles, n)
-		}
-		return nil
-	})
-	if err != nil {
+			return nil
+		})
+	}
+	contents := filepath.Join(app, "Contents")
+	if err := collect(filepath.Join(contents, "Resources"), ""); err != nil {
 		return err
+	}
+	for _, d := range c.contentsDirs() {
+		dir := filepath.Join(contents, d)
+		if _, err := os.Lstat(dir); err != nil {
+			continue
+		}
+		if err := collect(dir, "Contents/"+d+"/"); err != nil {
+			return err
+		}
 	}
 	inside := func(bundle string, list []nested) bool {
 		return slices.ContainsFunc(list, func(n nested) bool { return strings.HasPrefix(n.name, bundle+"/") })
@@ -1039,7 +1053,7 @@ func signNestedCode(c *Config, app, identity string, production bool) error {
 	}
 	if len(unknown) > 0 {
 		slices.Sort(unknown)
-		return fmt.Errorf("%s: macos.helperEntitlements: the resources hold no executable, library or bundle at %s", c.configName(), strings.Join(unknown, ", "))
+		return fmt.Errorf("%s: macos.helperEntitlements: the resources and macos.contents hold no executable, library or bundle at %s", c.configName(), strings.Join(unknown, ", "))
 	}
 
 	var signed []nested

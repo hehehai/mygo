@@ -96,6 +96,9 @@ func listBuildInputs(c *Config) (*buildInputs, error) {
 	for _, p := range c.Resources {
 		in.trees = append(in.trees, c.path(p))
 	}
+	for _, p := range c.MacOS.Contents {
+		in.trees = append(in.trees, c.path(p))
+	}
 	if c.I18n != nil {
 		// The catalogs, which the app embeds once it imports them, and the
 		// TypeScript module is made of; not the accessors written from them.

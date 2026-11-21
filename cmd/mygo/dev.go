@@ -660,6 +660,11 @@ func (s *devSession) buildAndLaunch(ctx context.Context, t *task, running [32]by
 	if err := hashResources(h, res); err != nil {
 		return nil, sum, err
 	}
+	if runtime.GOOS == "darwin" {
+		if err := hashResources(h, dc.contentsResources(false)); err != nil {
+			return nil, sum, err
+		}
+	}
 	if err := hashNative(h, dc); err != nil {
 		return nil, sum, err
 	}
