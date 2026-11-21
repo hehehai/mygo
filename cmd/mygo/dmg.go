@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -287,27 +288,22 @@ func notarizeApp(n *Notarize, app string) error {
 }
 
 // submitNotary submits file to Apple's notary service, as what it names,
-// and waits for the verdict.
+// and waits for the verdict. The wait can take long (an hour for a team's
+// first submissions), and a network failure during it does not fail the
+// submission, which Apple keeps processing: then it waits again for the
+// same submission, a few times, before giving up.
 func submitNotary(n *Notarize, file, what string) (err error) {
 	t := con.start("Notarizing " + what)
 	t.set("usually takes a few minutes")
 	defer func() { t.end(err, "Notarized "+what) }()
-	args := []string{"notarytool", "submit", file, "--keychain-profile", n.KeychainProfile, "--wait", "--output-format", "json"}
-	if n.Keychain != "" {
-		args = append(args, "--keychain", n.Keychain)
-	}
-	cmd := exec.Command("xcrun", args...)
-	errOut := con.output("notarytool", os.Stderr)
-	cmd.Stderr = errOut
-	out, err := cmd.Output()
-	errOut.flush()
-	var result struct {
-		ID      string `json:"id"`
-		Status  string `json:"status"`
-		Message string `json:"message"`
-	}
-	if i := strings.LastIndexByte(string(out), '{'); i >= 0 {
-		_ = json.Unmarshal(out[i:], &result)
+	result, out, err := notarytool(n, "submit", file, "--wait")
+	for try := 1; err != nil && result.Status == "" && result.ID != "" && try <= notarizeRetries; try++ {
+		t.set(fmt.Sprintf("waiting again for submission %s (%d/%d)", result.ID, try, notarizeRetries))
+		time.Sleep(notarizeRetryDelay)
+		var again notaryResult
+		again, out, err = notarytool(n, "wait", result.ID)
+		again.ID = result.ID
+		result = again
 	}
 	if err != nil || result.Status != "Accepted" {
 		msg := fmt.Sprintf("notarization failed (%s", strings.TrimSpace(result.Status+" "+result.Message))
@@ -321,6 +317,61 @@ func submitNotary(n *Notarize, file, what string) (err error) {
 		return fmt.Errorf("%s\n%s", msg, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// notarizeRetries and notarizeRetryDelay bound the waits again after a
+// network failure.
+var (
+	notarizeRetries    = 5
+	notarizeRetryDelay = 30 * time.Second
+)
+
+type notaryResult struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// notarytool runs `xcrun notarytool <verb> <arg>` with the credentials
+// and JSON output, and returns its result: the submission's id, also when
+// only the progress on stderr named it (a failure before the verdict).
+func notarytool(n *Notarize, verb, arg string, extra ...string) (notaryResult, []byte, error) {
+	args := append([]string{"notarytool", verb, arg, "--keychain-profile", n.KeychainProfile, "--output-format", "json"}, extra...)
+	if n.Keychain != "" {
+		args = append(args, "--keychain", n.Keychain)
+	}
+	cmd := exec.Command("xcrun", args...)
+	errOut := con.output("notarytool", os.Stderr)
+	var stderr strings.Builder
+	cmd.Stderr = io.MultiWriter(errOut, &stderr)
+	out, err := cmd.Output()
+	errOut.flush()
+	var result notaryResult
+	if i := strings.LastIndexByte(string(out), '{'); i >= 0 {
+		_ = json.Unmarshal(out[i:], &result)
+	}
+	if result.ID == "" {
+		result.ID = submissionID(stderr.String())
+	}
+	return result, out, err
+}
+
+// submissionID finds the id that notarytool prints ("id: <uuid>") while it
+// uploads and waits.
+func submissionID(log string) string {
+	for _, line := range strings.Split(log, "\n") {
+		if _, rest, ok := strings.Cut(line, "id: "); ok {
+			if id := strings.TrimSpace(rest); len(id) == 36 && strings.Count(id, "-") == 4 {
+				return id
+			}
+		}
+	}
+	if i := strings.Index(log, "/notary/v2/submissions/"); i >= 0 {
+		if rest := log[i+len("/notary/v2/submissions/"):]; len(rest) >= 36 && strings.Count(rest[:36], "-") == 4 {
+			return rest[:36]
+		}
+	}
+	return ""
 }
 
 func fileExists(path string) bool {
