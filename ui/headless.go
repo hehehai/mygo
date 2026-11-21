@@ -622,6 +622,14 @@ func (t *Tester) SetRegion(r i18n.Region) {
 
 // SetDirection lays the window out in d, as an app whose language reads
 // so: RightToLeft lays it out from the right.
+// SetFontSmoothing turns font smoothing on or off for the window's text,
+// as Content.FontSmoothing does for a window's.
+func (t *Tester) SetFontSmoothing(on bool) {
+	t.rt.unsmoothed = !on
+	t.rt.themeChanged()
+	t.settle()
+}
+
 func (t *Tester) SetDirection(d Direction) {
 	t.h.rtl = d == RightToLeft
 	t.Frame()

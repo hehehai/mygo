@@ -2384,3 +2384,38 @@ func sameLayout(a, b *Layout) bool {
 	}
 	return true
 }
+
+// TestFlatCachedApart keeps Flat glyphs of a shaded font apart from its
+// glyphs of each shade in the cache, so that windows drawing without font
+// smoothing (ui.Content.FontSmoothing) leave the others' text as it is.
+func TestFlatCachedApart(t *testing.T) {
+	s := newSystem()
+	l := s.Layout(Params{Text: "O", Style: Style{Size: 13}})
+	g := l.Lines[0].Glyphs[0]
+	shaded := *g.Font
+	shaded.shaded = true
+	keys := map[Shade]glyphKey{}
+	for _, shade := range []Shade{0, Shades - 1, Flat} {
+		n := len(s.glyphs)
+		s.Glyph(&shaded, g.ID, 2, 0, shade, false)
+		if len(s.glyphs) != n+1 {
+			t.Fatalf("shade %d: %d glyphs cached, want %d", shade, len(s.glyphs), n+1)
+		}
+		for k := range s.glyphs {
+			if k.shade == shade {
+				keys[shade] = k
+			}
+		}
+	}
+	if keys[Flat] == keys[Shades-1] || keys[Flat] == keys[0] {
+		t.Errorf("Flat glyphs share a key with a shade: %v", keys)
+	}
+	// Again: each comes from the cache.
+	n := len(s.glyphs)
+	for _, shade := range []Shade{Flat, Shades - 1, 0} {
+		s.Glyph(&shaded, g.ID, 2, 0, shade, false)
+	}
+	if len(s.glyphs) != n {
+		t.Errorf("drawing the glyphs again cached %d more", len(s.glyphs)-n)
+	}
+}
