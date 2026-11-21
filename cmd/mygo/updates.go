@@ -219,7 +219,7 @@ func writeArchive(c *Config, stage, target string, entries []string) ([]string, 
 	}
 	name := c.slug() + "-" + c.Version + "-" + target + ".tar.gz"
 	archive := filepath.Join(stage, name)
-	size, sig, err := writeSigned(archive, key, func(w io.Writer) error {
+	size, sig, digest, err := writeSigned(archive, key, func(w io.Writer) error {
 		return update.WriteArchive(w, stage, entries)
 	})
 	if err != nil {
@@ -235,6 +235,7 @@ func writeArchive(c *Config, stage, target string, entries []string) ([]string, 
 		URL:       c.updateFile(name, false),
 		Size:      size,
 		Signature: sig,
+		Release:   update.SignRelease(key, c.Version, "", digest),
 	}
 	files := []string{archive}
 	if n := c.Updates.deltas(); n > 0 {
@@ -252,12 +253,12 @@ func writeArchive(c *Config, stage, target string, entries []string) ([]string, 
 	return append(files, manifest), nil
 }
 
-// writeSigned writes a file with write and returns its size and signature,
-// none without a key.
-func writeSigned(path string, key ed25519.PrivateKey, write func(io.Writer) error) (int64, string, error) {
+// writeSigned writes a file with write and returns its size, signature
+// (none without a key) and SHA-256 digest.
+func writeSigned(path string, key ed25519.PrivateKey, write func(io.Writer) error) (int64, string, []byte, error) {
 	f, err := os.Create(path)
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 	sum := sha256.New()
 	err = write(io.MultiWriter(f, sum))
@@ -265,16 +266,16 @@ func writeSigned(path string, key ed25519.PrivateKey, write func(io.Writer) erro
 		err = cerr
 	}
 	if err != nil {
-		return 0, "", err
+		return 0, "", nil, err
 	}
 	info, err := os.Stat(path)
 	switch {
 	case err != nil:
-		return 0, "", err
+		return 0, "", nil, err
 	case key == nil:
-		return info.Size(), "", nil
+		return info.Size(), "", sum.Sum(nil), nil
 	}
-	return info.Size(), update.Sign(key, sum.Sum(nil)), nil
+	return info.Size(), update.Sign(key, sum.Sum(nil)), sum.Sum(nil), nil
 }
 
 // writeDeltas makes delta updates to the app of target in stage from the
@@ -367,14 +368,14 @@ func writeDelta(get archiveGetter, key ed25519.PrivateKey, base update.Archive, 
 		}
 		oldDir = filepath.Join(oldDir, all[0].Name())
 	}
-	size, sig, err := writeSigned(path, key, func(w io.Writer) error {
+	size, sig, digest, err := writeSigned(path, key, func(w io.Writer) error {
 		return update.WriteDelta(w, base.Version, version, oldDir, newDir, newEntries)
 	})
 	if err != nil {
 		os.Remove(path)
 		return update.Delta{}, err
 	}
-	return update.Delta{From: base.Version, Size: size, Signature: sig}, nil
+	return update.Delta{From: base.Version, Size: size, Signature: sig, Release: update.SignRelease(key, version, base.Version, digest)}, nil
 }
 
 var errNotPublished = errors.New("not published")

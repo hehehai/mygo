@@ -356,6 +356,9 @@ func main() {
 	if d := m.Deltas[0]; d.Size > m.Size/5 {
 		t.Errorf("the delta update takes %d bytes, the archive %d", d.Size, m.Size)
 	}
+	if m.Release == "" || m.Deltas[0].Release == "" || m.Signature == "" || m.Deltas[0].Signature == "" {
+		t.Errorf("the manifest is not signed for its version: %+v", m)
+	}
 
 	// Install 1.0.0 as a user would, and run it.
 	install := t.TempDir()

@@ -64,7 +64,8 @@ func updateServer(t *testing.T, version, content, deltaFrom string) (srv *httpte
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(archive.Bytes())
-	m = update.Manifest{Version: version, Notes: "- Faster", Date: "2026-09-27T10:00:00Z", Size: int64(archive.Len()), Signature: update.Sign(priv, sum[:])}
+	m = update.Manifest{Version: version, Notes: "- Faster", Date: "2026-09-27T10:00:00Z", Size: int64(archive.Len()), Signature: update.Sign(priv, sum[:]),
+		Release: update.SignRelease(priv, version, "", sum[:])}
 	var mu sync.Mutex
 	counts := map[string]int{}
 	mux := http.NewServeMux()
@@ -87,7 +88,8 @@ func updateServer(t *testing.T, version, content, deltaFrom string) (srv *httpte
 			t.Fatal(err)
 		}
 		sum := sha256.Sum256(delta.Bytes())
-		m.Deltas = []update.Delta{{From: deltaFrom, URL: srv.URL + "/app.delta", Size: int64(delta.Len()), Signature: update.Sign(priv, sum[:])}}
+		m.Deltas = []update.Delta{{From: deltaFrom, URL: srv.URL + "/app.delta", Size: int64(delta.Len()), Signature: update.Sign(priv, sum[:]),
+			Release: update.SignRelease(priv, version, deltaFrom, sum[:])}}
 		mux.HandleFunc("/app.delta", func(w http.ResponseWriter, r *http.Request) { w.Write(delta.Bytes()) })
 	}
 	mux.HandleFunc("/update.json", func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(m) })
@@ -188,9 +190,25 @@ func TestUpdater(t *testing.T) {
 	// changes nothing.
 	target, main = installedApp(t)
 	bad := up.manifest
-	bad.Signature = base64.StdEncoding.EncodeToString(make([]byte, 64))
+	bad.Release = base64.StdEncoding.EncodeToString(make([]byte, 64))
 	if err := installUpdate(ctx, httpGet, bad, key, up.current, target, nil); err == nil || !strings.Contains(err.Error(), "signed") {
 		t.Errorf("bad signature: %v", err)
+	}
+	// The archive's own signature alone (a manifest of before release
+	// signatures) is not enough: it does not say what version it is.
+	old := up.manifest
+	old.Release = ""
+	if err := installUpdate(ctx, httpGet, old, key, up.current, target, nil); err == nil || !strings.Contains(err.Error(), "signed") {
+		t.Errorf("no release signature: %v", err)
+	}
+	// A signed archive offered as another version (an old one as newer, a
+	// beta as a release) is refused.
+	for _, v := range []string{"9.9.9", "1.2.0-beta.1"} {
+		replay := up.manifest
+		replay.Version = v
+		if err := installUpdate(ctx, httpGet, replay, key, up.current, target, nil); err == nil || !strings.Contains(err.Error(), "signed") {
+			t.Errorf("the archive of 1.2.0 as %s: %v", v, err)
+		}
 	}
 	otherKey, _, _ := ed25519.GenerateKey(nil)
 	if err := installUpdate(ctx, httpGet, up.manifest, base64.StdEncoding.EncodeToString(otherKey), up.current, target, nil); err == nil {
@@ -203,6 +221,49 @@ func TestUpdater(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(main); string(b) != "v1" {
 		t.Errorf("a refused update changed main to %q", b)
+	}
+}
+
+// Channels: an app of a release is offered no beta unless its user chose
+// prereleases; an app of a beta takes betas and the release after them.
+// Redirects go to HTTPS only.
+func TestUpdaterChannelsAndRedirects(t *testing.T) {
+	ctx := context.Background()
+	srv, key, _, _ := updateServer(t, "1.3.0-beta.1", "v2", "")
+	feed := feedSource(srv.URL + "/update.json")
+	if up, err := checkUpdate(ctx, feed, key, "1.2.0", false); up != nil || err != nil {
+		t.Errorf("an app of a release offered a beta: %+v, %v", up, err)
+	}
+	if up, err := checkUpdate(ctx, feed, key, "1.2.0", true); up == nil || err != nil {
+		t.Errorf("an app of a release that takes prereleases not offered the beta: %+v, %v", up, err)
+	}
+	if up, err := checkUpdate(ctx, feed, key, "1.3.0-alpha.2", false); up == nil || err != nil {
+		t.Errorf("an app of a beta not offered a newer beta: %+v, %v", up, err)
+	}
+	srv2, key2, _, _ := updateServer(t, "1.3.0", "v2", "")
+	if up, err := checkUpdate(ctx, feedSource(srv2.URL+"/update.json"), key2, "1.3.0-beta.4", false); up == nil || err != nil {
+		t.Errorf("an app of a beta not offered the release: %+v, %v", up, err)
+	}
+	for _, c := range []struct {
+		current, offered string
+		pre, takes       bool
+	}{
+		{"0.1.0-beta.2", "0.1.0-beta.3", false, true},
+		{"0.1.0", "0.1.1", false, true},
+		{"0.1.0", "0.2.0-beta.1", false, false},
+		{"0.1.0", "0.2.0-beta.1", true, true},
+		{"0.2.0-beta.1", "0.1.1", true, false},
+	} {
+		if got := update.Takes(c.current, c.offered, c.pre); got != c.takes {
+			t.Errorf("Takes(%s, %s, %t) = %t", c.current, c.offered, c.pre, got)
+		}
+	}
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/update.json", http.StatusFound)
+	}))
+	defer redirect.Close()
+	if _, err := checkUpdate(ctx, feedSource(redirect.URL+"/update.json"), key, "1.0.0", false); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Errorf("a redirect to plain HTTP: %v", err)
 	}
 }
 
@@ -266,7 +327,7 @@ func TestUpdaterDelta(t *testing.T) {
 	}
 	unsigned := up.manifest
 	unsigned.Deltas = []update.Delta{delta}
-	unsigned.Deltas[0].Signature = m.Signature
+	unsigned.Deltas[0].Signature, unsigned.Deltas[0].Release = m.Signature, m.Release
 	install(unsigned, up.current, false)
 	if requests("/app.delta") != 3 || requests("/app.tar.gz") != 3 {
 		t.Errorf("downloaded the delta %d times and the archive %d", requests("/app.delta"), requests("/app.tar.gz"))
@@ -449,7 +510,8 @@ func TestUpdaterSource(t *testing.T) {
 	if up, err := checkUpdate(ctx, src, key, "1.1.9", false); err == nil {
 		t.Errorf("an unsigned update was offered: %+v", up)
 	}
-	src.m.Signature = base64.StdEncoding.EncodeToString(make([]byte, 64))
+	src.m.Signature = m.Signature
+	src.m.Release = base64.StdEncoding.EncodeToString(make([]byte, 64))
 	up, err = checkUpdate(ctx, src, key, "1.1.9", false)
 	if err != nil || up == nil {
 		t.Fatalf("checkUpdate = %+v, %v", up, err)

@@ -69,8 +69,10 @@ var updateSource atomic.Pointer[UpdateSource]
 // has, an endpoint that needs the user's credentials, or a channel the app
 // chooses while it runs. It serves what `mygo build` publishes, from
 // wherever the app keeps it, and Updater checks it as it checks the feed's:
-// the archive and deltas must be signed with the key of updates.publicKey
-// that the app was built with, or they are not installed.
+// the archive and deltas must carry the release signatures `mygo build`
+// writes (update.ReleaseMessage: the digest with the version and channel),
+// made with the key of updates.publicKey that the app was built with, or
+// they are not installed.
 type UpdateSource interface {
 	// Manifest returns the manifest of the running platform: the JSON that
 	// `mygo build` writes as update-<target>.json, such as
@@ -199,7 +201,11 @@ func checkUpdate(ctx context.Context, src UpdateSource, key, current string, pre
 	if m.Version == "" || m.URL == "" || m.Signature == "" {
 		return nil, errors.New("mygo: checking for updates: incomplete manifest")
 	}
-	if update.Compare(m.Version, current) <= 0 {
+	// A newer version, of a channel this app takes (no beta for an app of a
+	// release, unless its user chose prereleases); the release signature,
+	// checked as Install downloads, binds the version and its channel to
+	// the archive.
+	if !update.Takes(current, m.Version, pre) {
 		return nil, nil
 	}
 	up := &Update{Version: m.Version, Notes: m.Notes, manifest: m, key: key, current: current, source: src}
@@ -289,7 +295,7 @@ func installUpdate(ctx context.Context, get update.Getter, m update.Manifest, ke
 	}
 
 	if d := m.Delta(current); d != nil {
-		err := applyDelta(ctx, get, *d, pub, m.Version, target, work, unpacked, progress)
+		err := applyDelta(ctx, get, *d, pub, m.Version, current, target, work, unpacked, progress)
 		if err == nil {
 			return swap(unpacked, target)
 		}
@@ -306,7 +312,7 @@ func installUpdate(ctx context.Context, get update.Getter, m update.Manifest, ke
 		return fmt.Errorf("invalid size %d", m.Size)
 	}
 	archive := filepath.Join(work, "update.tar.gz")
-	if err := download(ctx, get, m.URL, m.Size, m.Signature, pub, archive, progress); err != nil {
+	if err := download(ctx, get, m.URL, m.Size, signed{m.Release, m.Version, ""}, pub, archive, progress); err != nil {
 		return err
 	}
 	f, err := os.Open(archive)
@@ -336,12 +342,15 @@ func workPattern(target string) string {
 // applyDelta downloads the delta d into work and makes the new version of
 // the app at target from it, in dir: its bundle on macOS, in dir too, as
 // the bundle of an archive is.
-func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25519.PublicKey, version, target, work, dir string, progress func(downloaded, total int64)) error {
+func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25519.PublicKey, version, current, target, work, dir string, progress func(downloaded, total int64)) error {
 	if d.Size <= 0 || d.Size > update.MaxArchiveSize {
 		return fmt.Errorf("invalid size %d", d.Size)
 	}
+	if d.From != current {
+		return fmt.Errorf("the delta updates %s, not %s", d.From, current)
+	}
 	path := filepath.Join(work, "update.delta")
-	if err := download(ctx, get, d.URL, d.Size, d.Signature, pub, path, progress); err != nil {
+	if err := download(ctx, get, d.URL, d.Size, signed{d.Release, version, d.From}, pub, path, progress); err != nil {
 		return err
 	}
 	f, err := os.Open(path)
@@ -358,9 +367,18 @@ func applyDelta(ctx context.Context, get update.Getter, d update.Delta, pub ed25
 	return update.ApplyDelta(f, d.Size, d.From, version, target, dir)
 }
 
+// signed is the release signature of a download (update.ReleaseMessage):
+// of the digest with the version it makes, from version from for a delta.
+// It is the signature the updater checks, whatever the source; the
+// archive's own signature, which does not say what version it is, is left
+// to apps built before release signatures.
+type signed struct {
+	release, version, from string
+}
+
 // download fetches url with get into the file path and checks its size and
-// signature.
-func download(ctx context.Context, get update.Getter, url string, size int64, signature string, pub ed25519.PublicKey, path string, progress func(downloaded, total int64)) error {
+// release signature.
+func download(ctx context.Context, get update.Getter, url string, size int64, sig signed, pub ed25519.PublicKey, path string, progress func(downloaded, total int64)) error {
 	body, err := get(ctx, url)
 	if err != nil {
 		return err
@@ -381,7 +399,7 @@ func download(ctx context.Context, get update.Getter, url string, size int64, si
 	if n != size {
 		return fmt.Errorf("downloaded %d bytes, want %d", n, size)
 	}
-	return update.Verify(pub, sum.Sum(nil), signature)
+	return update.VerifyRelease(pub, sig.version, sig.from, sum.Sum(nil), sig.release)
 }
 
 // stagedUpdate is a new version of the app bundle target, at bundle in
@@ -764,7 +782,20 @@ func httpClient() *http.Client {
 func newHTTPClient() *http.Client {
 	transport := netproxy.Transport().Clone()
 	transport.ResponseHeaderTimeout = httpHeaderTimeout
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport, CheckRedirect: httpsRedirects}
+}
+
+// httpsRedirects follows redirects to HTTPS only: an update's files must
+// not come over plain HTTP, whatever sends them on. Plain HTTP stays
+// allowed on the loopback interface, for tests.
+func httpsRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" && !(req.URL.Scheme == "http" && isLoopback(req.URL.Hostname())) {
+		return fmt.Errorf("refusing a redirect to %s: updates need HTTPS", req.URL.Redacted())
+	}
+	return nil
 }
 
 // stalledBody cancels the request of a body that stops arriving, and says
