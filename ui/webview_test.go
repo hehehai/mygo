@@ -524,3 +524,78 @@ func TestNativeViewGone(t *testing.T) {
 		t.Fatal("a closed view came back")
 	}
 }
+
+// A web view in a container clipped at a fraction of a pixel shows to
+// the pixel the painter cuts its hole at: on whole pixels, as the clip
+// the painter pushes. Cut a fraction short, the native view left a
+// hairline of what is under the window's content along the edge.
+func TestWebViewClipWholePixels(t *testing.T) {
+	page := &testWebView{"page"}
+	tt := coreNewTester(func(c *context) {
+		coreColumn(c).Fill().AlignItems(Stretch).Children(func() {
+			coreBox(c).Height(40.3)
+			coreRow(c).Grow(1).MinHeight(0).AlignItems(Stretch).Clip().Children(func() {
+				coreWebView(c, page).Grow(1).Height(400)
+			})
+			coreBox(c).Height(20.4)
+		})
+	}, 300, 300)
+	p, ok := placed(tt, page)
+	if !ok {
+		t.Fatal("the web view does not show")
+	}
+	s := float64(tt.rt.painted[2])
+	whole := func(v float64) bool { return math.Abs(v*s-math.Round(v*s)) < 1e-3 }
+	if !whole(p.clip.Y) || !whole(p.clip.Y+p.clip.H) || !whole(p.frame.Y) || !whole(p.frame.Y+p.frame.H) {
+		t.Fatalf("frame %+v clip %+v at scale %v: want whole pixels", p.frame, p.clip, s)
+	}
+	var pushed []scene.Rect
+	for _, op := range tt.rt.scene.Ops {
+		if op.Kind == scene.OpPushClip {
+			pushed = append(pushed, op.Rect)
+		}
+	}
+	bottom := (p.clip.Y + p.clip.H) * s
+	found := false
+	for _, r := range pushed {
+		if float64(r.Y+r.H) == bottom {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the web view's clip ends at %v pixels, no clip the painter pushed does (%+v)", bottom, pushed)
+	}
+}
+
+// WebKit lays a page out in whole points: a web view's frame is whole
+// points, at least its hole, whose edges the clip keeps. A frame on a
+// half point at scale 2 left the page's last row of pixels unpainted:
+// the web view's background showed as a line along its bottom.
+func TestWebViewFrameWholePoints(t *testing.T) {
+	page := &testWebView{"page"}
+	tt := coreNewTester(func(c *context) {
+		coreColumn(c).Fill().AlignItems(Stretch).Children(func() {
+			coreBox(c).Height(40.5)
+			coreWebView(c, page).Grow(1).MinHeight(0)
+			coreBox(c).Height(20)
+		})
+	}, 300, 301)
+	tt.SetScale(2)
+	tt.Frame()
+	p, ok := placed(tt, page)
+	if !ok {
+		t.Fatal("the web view does not show")
+	}
+	if p.frame.W != math.Trunc(p.frame.W) || p.frame.H != math.Trunc(p.frame.H) {
+		t.Errorf("frame %+v: want whole points", p.frame)
+	}
+	if p.size[0] != math.Trunc(p.size[0]) || p.size[1] != math.Trunc(p.size[1]) {
+		t.Errorf("page size %v: want whole points", p.size)
+	}
+	if p.frame.Y+p.frame.H < p.clip.Y+p.clip.H || p.frame.X+p.frame.W < p.clip.X+p.clip.W {
+		t.Errorf("frame %+v does not cover its clip %+v", p.frame, p.clip)
+	}
+	if p.clip.H != 240.5 || p.clip.Y != 40.5 {
+		t.Errorf("clip %+v: want the hole, 240.5 high at 40.5", p.clip)
+	}
+}

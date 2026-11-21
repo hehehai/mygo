@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"slices"
 
 	"github.com/egoist/mygo/internal/platform"
@@ -215,9 +216,25 @@ func (rt *engine) noteWebView(e *node, clip Rect, invisible bool) {
 		b = Rect{b.X / s, b.Y / s, b.W / s, b.H / s}
 		page = b
 	}
-	v := intersect(b, clip)
+	// The clips around it too: the painter cuts the hole at their edges on
+	// whole pixels (pushClip), and a native view cut a fraction of a pixel
+	// short of the hole left a hairline of what is under the window's
+	// content along that edge (a dark line under a page in a container
+	// whose height was a fraction).
+	c := snapPixels(clip, s)
+	v := intersect(b, Rect{c.X / s, c.Y / s, c.W / s, c.H / s})
 	if b.W <= 0 || b.H <= 0 || v.W <= 0 || v.H <= 0 {
 		return
+	}
+	// WebKit lays a page out in whole points: in a frame a fraction of a
+	// point taller (or wider) than that, a hole on a half point at scale
+	// 2, the page left its last row of pixels unpainted, and the web
+	// view's background showed there as a line along its bottom. The page
+	// goes on to whole points, its frame with it; the clip stays the hole.
+	whole := func(v float32) float32 { return float32(math.Ceil(float64(v - 1e-3))) }
+	if w, h := whole(page.W), whole(page.H); w != page.W || h != page.H {
+		b.W, b.H = b.W*w/page.W, b.H*h/page.H
+		page.W, page.H = w, h
 	}
 	wp := webPlace{v: e.webView, e: e, frame: b, clip: v, size: [2]float32{page.W, page.H}, hit: len(rt.hits), inert: invisible, opacity: 1}
 	if rt.commitFade <= 0.001 {
