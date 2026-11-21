@@ -16,6 +16,7 @@ func BenchmarkFrame(b *testing.B) {
 	for b.Loop() {
 		tt.h.img.Invalidate()
 		tt.Frame()
+		tt.h.draw() // drawn when asked for
 	}
 }
 
@@ -33,6 +34,7 @@ func BenchmarkFrameHover(b *testing.B) {
 		} else {
 			tt.Move(r.X-5, r.Y-5)
 		}
+		tt.h.draw()
 	}
 }
 
@@ -66,6 +68,7 @@ func BenchmarkFrameAnimatedPaths(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		tt.Frame()
+		tt.h.draw()
 	}
 }
 
@@ -262,6 +265,7 @@ func (s *sidebarScroller) step() {
 		dy = 40
 	}
 	s.tt.Scroll(sidebarX, sidebarY, 0, dy)
+	s.tt.h.draw() // drawn when asked for
 }
 
 // BenchmarkDiffSteady renders a frame of the diff scene where nothing
@@ -271,6 +275,7 @@ func BenchmarkDiffSteady(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		tt.Frame()
+		tt.h.draw()
 	}
 }
 
@@ -307,7 +312,7 @@ func TestDiffFrameAllocs(t *testing.T) {
 		t.Skip("measures")
 	}
 	tt, _ := diffSceneTester(true)
-	steady := testing.AllocsPerRun(100, tt.Frame)
+	steady := testing.AllocsPerRun(100, func() { tt.Frame(); tt.h.draw() })
 	tt, d := diffSceneTester(false)
 	s := &sidebarScroller{tt: tt, d: d}
 	sidebar := testing.AllocsPerRun(100, s.step)

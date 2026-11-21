@@ -88,8 +88,13 @@ type headless struct {
 	// reading runs once as the clipboard is next read, as GTK's nested
 	// event loop may draw a frame then.
 	reading func()
-	// last is the scene of the last frame, which tests inspect.
+	// last is the scene of the last frame, which tests inspect; drawn
+	// tells that img holds it. Its pixels are drawn when Image asks for
+	// them: most tests read the scene, the accessibility tree or the
+	// texts, and drawing every frame was most of their time (a third of
+	// a large app's, more under -race).
 	last        *scene.Scene
+	drawn       bool
 	dragData    transfer.Data
 	dragLocal   any
 	dragOptions transfer.DragOptions
@@ -131,9 +136,17 @@ func (h *headless) textSystem() *text.System {
 	}
 	return h.text
 }
-func (h *headless) present(s *scene.Scene) {
-	h.last = s
-	h.img.Render(s)
+func (h *headless) present(s *scene.Scene) { h.last, h.drawn = s, false }
+
+// draw draws the last frame into img, unless it is drawn. The renderer
+// redraws what changed since the scene it drew before, however many
+// frames came between: the atlases the scenes draw glyphs from are the
+// window's own (textSystem), whose changes it reads from their logs.
+func (h *headless) draw() {
+	if !h.drawn && h.last != nil {
+		h.img.Render(h.last)
+		h.drawn = true
+	}
 }
 func (h *headless) afterTimer(at time.Time) {
 	h.afterAt = at
@@ -271,6 +284,7 @@ func (h *headless) placeGlass([]platform.GlassPlacement)           {}
 func (h *headless) tabIntoWebView(v NativeWebView, back bool)      { h.tabbedInto, h.tabbedBack = v, back }
 func (h *headless) platformWebView(NativeWebView) platform.WebView { return nil }
 func (h *headless) image() *image.RGBA {
+	h.draw()
 	m := &h.img.Image
 	return &image.RGBA{Pix: m.RGBA(), Stride: 4 * m.W, Rect: image.Rect(0, 0, m.W, m.H)}
 }
@@ -631,7 +645,9 @@ func (t *Tester) AccessibilityOn() {
 // time, as the clock stands still until then.
 func (t *Tester) FramePending() bool { return t.asked() }
 
-// Image returns the last frame.
+// Image returns the last frame, drawn now: frames are drawn as Image asks
+// for their pixels, as most tests read the scene, the accessibility tree
+// or the texts.
 func (t *Tester) Image() *image.RGBA { return t.h.image() }
 
 // Find returns the box of the first element showing text s, or labeled s,

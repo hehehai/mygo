@@ -107,6 +107,7 @@ func BenchmarkTextAreaSteady(b *testing.B) {
 			tt, _ := textAreaTester(n)
 			for b.Loop() {
 				tt.Frame()
+				tt.h.draw() // drawn when asked for
 			}
 		})
 	}
@@ -124,6 +125,7 @@ func BenchmarkTextAreaOpen(b *testing.B) {
 				*s = texts[i%2]
 				i++
 				tt.Frame()
+				tt.h.draw()
 			}
 		})
 	}
