@@ -348,14 +348,30 @@ func (c *context) Theme() *Theme { return c.theme }
 
 // SetTheme makes the frame use t, for the window's root and the widgets
 // created after the call. Inside the children of a Themed, which keep its
-// theme, t is for the root and the widgets after the Themed.
+// theme, t is for the root and the widgets after the Themed. A background
+// or text style the view gave the root itself (such as
+// Root().Background(Transparent)) stays: a view can set a theme for a few
+// widgets and set its own back, as a primary button in another accent
+// does, without the root losing what it chose.
 func (c *context) SetTheme(t *Theme) {
+	old := c.window
 	if c.theme == c.window {
 		c.theme = t
 	}
 	c.window = t
-	c.root.bg = t.Background
-	c.root.ts.color, c.root.ts.size, c.root.ts.family = t.Text, t.FontSize, t.Font
+	r := c.root
+	if old == nil || r.bg == old.Background {
+		r.bg = t.Background
+	}
+	if old == nil || r.ts.color == old.Text {
+		r.ts.color = t.Text
+	}
+	if old == nil || r.ts.size == old.FontSize {
+		r.ts.size = t.FontSize
+	}
+	if old == nil || r.ts.family == old.Font {
+		r.ts.family = t.Font
+	}
 }
 
 // Themed creates a column whose children build with t, as SetTheme has
