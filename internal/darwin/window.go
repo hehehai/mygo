@@ -15,7 +15,9 @@ import (
 	"github.com/ebitengine/purego/objc"
 
 	"github.com/egoist/mygo/internal/bridge"
+	"github.com/egoist/mygo/internal/pdffit"
 	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/wheelroute"
 )
 
 const (
@@ -178,6 +180,17 @@ type window struct {
 	// pipActive tells that the page's document has a video in picture in
 	// picture, as its pipScript last said.
 	pipActive bool
+	// gest says which of a touchpad's gestures over a web view go to the
+	// content, scroll and pinch route the gesture under way, zoomed counts
+	// the page's zoom, pdf is a PDF's fit, known once it zooms
+	// (webview_gestures.go).
+	gest   gestureRouting
+	scroll wheelroute.Router
+	pinch  pinchRoute
+	zoomed zoomCount
+	pdf    pdffit.Fit
+	// noPDFHUD hides WebKit's controls over a PDF (webview_pdfhud.go).
+	noPDFHUD bool
 }
 
 func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler) (platform.Window, error) {
@@ -1786,8 +1799,13 @@ func (w *window) CallAsyncFunction(body string, cb func(string, error)) {
 	})
 }
 
-func (w *window) SetZoom(f float64) { msgSetFloat(w.web, sel("setPageZoom:"), f) }
-func (w *window) Zoom() float64     { return msgFloat(w.web, sel("pageZoom")) }
+func (w *window) SetZoom(f float64) {
+	if w.gest.zoom {
+		w.pdfZooms() // a PDF's page zoom is its scale (webview_gestures.go)
+	}
+	msgSetFloat(w.web, sel("setPageZoom:"), f)
+}
+func (w *window) Zoom() float64 { return msgFloat(w.web, sel("pageZoom")) }
 
 func (w *window) SetUserAgent(ua string) {
 	withPool(func() {
@@ -2726,6 +2744,7 @@ func registerWindowClasses() {
 			}),
 			method("webView:didCommitNavigation:", func(self id, _ objc.SEL, web, nav id) {
 				if w := b().windowFor(self); w != nil {
+					w.pageLoaded() // a PDF's fit is the next page's to find (webview_gestures.go)
 					w.h.NavigationCommitted(w.URL())
 				}
 			}),
@@ -2806,6 +2825,13 @@ func registerWindowClasses() {
 			method("webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:", func(self id, _ objc.SEL, web, prompt, defaultText, frame id, handler uintptr) {
 				w := b().windowFor(self)
 				jsPrompt(w, goString(prompt), goString(defaultText), handler)
+			}),
+			// WKUIDelegatePrivate: nothing scrolled for a wheel event
+			// (SetGestures' edges, webview_gestures.go).
+			method("_webView:didNotHandleWheelEvent:", func(self id, _ objc.SEL, web, ev id) {
+				if w := b().windowFor(self); w != nil && w.web == web {
+					w.pageDidNotScroll(ev)
+				}
 			}),
 			method("webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:", func(self id, _ objc.SEL, web, params, frame id, handler uintptr) {
 				w := b().windowFor(self)

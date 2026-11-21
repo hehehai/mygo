@@ -407,8 +407,10 @@ type engine struct {
 	pressDragger uint64
 	// zoomer is the element taking the touchpad's pinch under way (zoom),
 	// or 0.
-	zoomer  uint64
-	focused uint64
+	zoomer uint64
+	// dropGlide: the touchpad's glide under way is dropped (DropGlide).
+	dropGlide bool
+	focused   uint64
 	// texts are selectable paragraphs in build order; selection spans those
 	// of one Selectable container (textselection.go).
 	texts        []*state

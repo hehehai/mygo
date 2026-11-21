@@ -7,11 +7,13 @@ import (
 	"math"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/objc"
 
 	"github.com/egoist/mygo/internal/platform"
+	"github.com/egoist/mygo/internal/wheelroute"
 )
 
 // A web view in a window of native UI (platform.Surface.NewWebView) is a
@@ -145,6 +147,14 @@ func (s *surface) PlaceWebViews(views []platform.WebViewPlacement) {
 			shown = append(shown, v)
 		}
 		for _, v := range host.webViews {
+			if !slices.Contains(shown, v) && v.holdsShown() {
+				// A pinch the content has goes on over it
+				// (webview_gestures.go): hidden as it ends, or once its
+				// events stopped.
+				gestureLog("pinch goes on: the web view stays shown under the content")
+				s.recheckPlaces()
+				continue
+			}
 			if !slices.Contains(shown, v) && !sendBool(v.clip, "isHidden") {
 				if v.hasKeyboard() {
 					// A hidden view keeps no keyboard: it goes back to the
@@ -158,6 +168,24 @@ func (s *surface) PlaceWebViews(views []platform.WebViewPlacement) {
 		if len(s.glassShown) > 0 {
 			s.stackGlass(s.glassShown, true)
 		}
+	})
+}
+
+// recheckPlaces places the web views again after a pinch's hold
+// (pinchHold), as last placed: one held shown hides if the pinch's events
+// stopped without an end.
+func (s *surface) recheckPlaces() {
+	if s.recheck {
+		return
+	}
+	s.recheck = true
+	time.AfterFunc(pinchHold+50*time.Millisecond, func() {
+		theBackend.post(func() {
+			s.recheck = false
+			if !s.w.closed {
+				s.PlaceWebViews(slices.Clone(s.placed))
+			}
+		})
 	})
 }
 
@@ -395,6 +423,8 @@ func (w *window) closeWebView() {
 		return
 	}
 	w.closed = true
+	w.scroll.Set(wheelroute.Routing{}) // lets go of a gesture's events held
+	w.dropPinch()
 	b := w.b
 	withPool(func() {
 		if w.hasKeyboard() && w.host.surface != nil {
@@ -495,18 +525,54 @@ func webViewMethods() []objc.MethodDef {
 		}
 		sendSuper(self, "MyGoWebView", cmd, uintptr(ev))
 	}
-	return []objc.MethodDef{
+	return append(pdfHUDMethods(), // webview_pdfhud.go
 		// The first click in a window that is not key is the page's, as it
 		// is native UI's (MyGoSurfaceView): WKWebView answers no, which
 		// spends the click on making the window key.
 		method("acceptsFirstMouse:", func(self id, _ objc.SEL, ev id) bool { return true }),
 		method("scrollWheel:", func(self id, cmd objc.SEL, ev id) {
 			w := theBackend.byWebView[self]
-			if w == nil || w.host == nil || w.host.surface == nil || w.opts == nil || !w.opts.ScrollToContainer {
+			switch {
+			case w == nil || w.host == nil || w.host.surface == nil:
 				sendSuper(self, "MyGoWebView", cmd, uintptr(ev))
+			case w.opts != nil && w.opts.ScrollToContainer:
+				scrollWheel(w.host.surface, ev)
+			case w.gest.routesScroll():
+				// A touchpad's gestures over the page may be the
+				// content's (SetGestures, webview_gestures.go).
+				w.routeScroll(ev)
+			default:
+				sendSuper(self, "MyGoWebView", cmd, uintptr(ev))
+			}
+		}),
+		method("swipeWithEvent:", func(self id, cmd objc.SEL, ev id) {
+			if w := theBackend.byWebView[self]; w != nil && w.host != nil && w.gest.routesScroll() && w.host.surface != nil {
+				send(w.host.surface.view, "swipeWithEvent:", uintptr(ev))
 				return
 			}
-			scrollWheel(w.host.surface, ev)
+			sendSuper(self, "MyGoWebView", cmd, uintptr(ev))
+		}),
+		method("magnifyWithEvent:", func(self id, cmd objc.SEL, ev id) {
+			if w := theBackend.byWebView[self]; w != nil {
+				if w.host != nil && w.gest.pinchIn && w.routeMagnify(self, cmd, ev) {
+					return // the content's
+				}
+				if !w.toPage(ev) {
+					return // a PDF at its fit (webview_gestures.go)
+				}
+			}
+			sendSuper(self, "MyGoWebView", cmd, uintptr(ev))
+		}),
+		method("smartMagnifyWithEvent:", func(self id, cmd objc.SEL, ev id) {
+			if w := theBackend.byWebView[self]; w != nil && w.host != nil && w.gest.pinchIn && !w.gest.zoom && w.host.surface != nil {
+				send(w.host.surface.view, "smartMagnifyWithEvent:", uintptr(ev))
+				return // the page does not zoom: the content's
+			}
+			if w := theBackend.byWebView[self]; w != nil && w.gest.zoom {
+				w.pdfZooms()
+				w.zoomed.smart = !w.zoomed.smart
+			}
+			sendSuper(self, "MyGoWebView", cmd, uintptr(ev))
 		}),
 		method("rightMouseDown:", press(1)),
 		method("otherMouseDown:", press(2)),
@@ -533,7 +599,7 @@ func webViewMethods() []objc.MethodDef {
 			}
 			return sendSuper(self, "MyGoWebView", cmd)
 		}),
-	}
+	)
 }
 
 // unhandledKey gives the content a key that the page of the web view in

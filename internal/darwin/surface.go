@@ -193,6 +193,9 @@ type surface struct {
 	// placed are where the content shows the window's web views, under
 	// it (webview.go).
 	placed []platform.WebViewPlacement
+	// recheck: placed again after a pinch's hold (recheckPlaces,
+	// webview.go).
+	recheck bool
 	// glass are the system's glass views by element, under the content
 	// and above the web views; glassShown is their order, bottom to top.
 	glass      map[uint64]id

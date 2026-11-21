@@ -135,6 +135,9 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		}
 	case platform.PointerScroll:
 		rt.pointerMove(x, y)
+		if rt.dropsGlide(GesturePhase(ev.Phase), ev.Momentum) {
+			break
+		}
 		rt.scroll(float32(ev.DX), float32(ev.DY), Modifiers(ev.Mods), ev.Precise, ev.Momentum, GesturePhase(ev.Phase))
 	case platform.PointerSwipe:
 		rt.pointerMove(x, y)
@@ -966,6 +969,33 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool,
 			return
 		}
 	}
+}
+
+// DropGlide drops the rest of the touchpad's glide under way (the scroll
+// events with Momentum after the fingers lifted) before any element has
+// them, to the glide's end or until a new gesture begins (a scroll event
+// GestureBegan without Momentum): a view that turned to another page with
+// a gesture, or while it glided, keeps the glide from scrolling what it
+// shows now. A mouse wheel has no glide. macOS tells a glide's phases;
+// elsewhere a glide is dropped until a scroll without Momentum.
+func (c *context) DropGlide() { c.rt.dropGlide = true }
+
+// dropsGlide reports whether a scroll event of phase and momentum is
+// dropped (DropGlide).
+func (rt *engine) dropsGlide(phase GesturePhase, momentum bool) bool {
+	if !rt.dropGlide {
+		return false
+	}
+	if !momentum {
+		if phase == GestureBegan || phase == GestureNone {
+			rt.dropGlide = false
+		}
+		return false
+	}
+	if phase == GestureEnded {
+		rt.dropGlide = false
+	}
+	return true
 }
 
 // swipe gives a swipe to the innermost element under the pointer that
