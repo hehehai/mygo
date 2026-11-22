@@ -307,3 +307,30 @@ func TestRateLimitsAndColorimetry(t *testing.T) {
 		t.Skip("no encoder of H.264 or HEVC here")
 	}
 }
+
+// TestFFmpegConvertsWithBT709 checks that ffmpeg makes YUV of the frames
+// with the matrix of BT.709, which the video says it has: red's luma is
+// 63 in the range of video, where BT.601's is 81, and keeps the tags.
+func TestFFmpegConvertsWithBT709(t *testing.T) {
+	bin, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("no ffmpeg")
+	}
+	comp := Composition{Width: 64, Height: 64, Frames: 3, Background: ui.RGB(255, 0, 0), View: func(*ui.Context, Frame) {}}
+	for _, name := range []string{"red.mp4", "red.mov"} {
+		path := filepath.Join(t.TempDir(), name)
+		if err := Video(context.Background(), comp, path, Options{Encoder: FFmpeg, Renderer: CPU, Silent: true, Colorimetry: SRGB}); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(bin, "-v", "error", "-i", path, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-").Output()
+		if err != nil || len(out) < 64*64 {
+			t.Fatalf("%s: decoding: %v", name, err)
+		}
+		if y := int(out[32*64+32]); y < 61 || y > 65 {
+			t.Errorf("%s: red's luma %d, want 63 of BT.709", name, y)
+		}
+		if _, kind, colr := mp4Video(t, path); colr != [3]uint16{1, 13, 1} {
+			t.Errorf("%s: colr %s %v, want 1-13-1", name, kind, colr)
+		}
+	}
+}

@@ -142,14 +142,20 @@ func (s *ffmpegSink) videoArgs() []string {
 	return a
 }
 
-// colorArgs returns ffmpeg's arguments of the frames' colorimetry, which
-// it writes into the stream and the colr box.
+// colorArgs returns ffmpeg's arguments of the frames' colorimetry: the
+// conversion of the BGRA frames to YUV, with BT.709's matrix in the range
+// of video, and the tags of the stream and of the colr box. Without its
+// filter, ffmpeg 6 converts with BT.601's matrix, and ffmpeg 8 drops the
+// tags the encoder is given.
 func (s *ffmpegSink) colorArgs() []string {
 	trc := "bt709"
 	if s.spec.color.srgb() {
 		trc = "iec61966-2-1"
 	}
-	return []string{"-color_primaries", "bt709", "-color_trc", trc, "-colorspace", "bt709"}
+	return []string{
+		"-vf", "scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=" + trc + ":colorspace=bt709:range=tv",
+		"-color_primaries", "bt709", "-color_trc", trc, "-colorspace", "bt709",
+	}
 }
 
 func (s *ffmpegSink) frame(_ int, pix []byte) error {
