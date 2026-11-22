@@ -428,6 +428,7 @@ func (rt *engine) hoverScrolled() {
 }
 
 func (rt *engine) pointerMove(x, y float32) {
+	rt.tips.moved = rt.now() // tooltip.go: a tip waits for the pointer to rest
 	if d := &rt.scrollDrag; d.st != nil {
 		s := d.st
 		g := s.scrollbarGeometry(s.x, s.y, d.contentW, d.contentH, s.scrollX, s.scrollY)
@@ -917,6 +918,7 @@ func (s *state) quietClick(mods Modifiers) {
 }
 
 func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool, phase GesturePhase) {
+	rt.coolTips() // tooltip.go: a scroll hides the tip
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
 	rt.chain = chain[:0]
 	// From the innermost element out, the first handling its input to

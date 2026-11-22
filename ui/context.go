@@ -818,6 +818,8 @@ type state struct {
 	// of another going: its theme's TooltipDelay.
 	tip               bool
 	tipDelay, tipWarm time.Duration
+	// tipRest is its theme's TooltipRest.
+	tipRest bool
 	// popped is the last frame a popup attached to the element showed in
 	// (popupShows): a menu, a popover or a select's options, while which
 	// its tip does not show.

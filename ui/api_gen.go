@@ -3156,7 +3156,8 @@ func Toolbar(c *Context, fn func()) Element {
 // 0.6 seconds, at once as anchor gets the keyboard focus from the
 // keyboard, and at once too within 0.4 seconds of another tip going, as
 // the pointer moves along a toolbar; the theme's TooltipDelay changes
-// both. It goes as the pointer leaves anchor
+// both, its TooltipRest has them wait for the pointer to rest, and its
+// TooltipFadeIn and TooltipFadeOut fade the tip. It goes as the pointer leaves anchor
 // or presses it, as a menu or popover of anchor opens, and with Escape,
 // until the pointer comes back or the focus does; it does not show while
 // that menu or popover shows. Over elements inside one another, the

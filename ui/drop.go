@@ -57,6 +57,7 @@ func (rt *engine) dropTarget(x, y float32) *state {
 // fileDrag follows files dragged over (x, y), or out of the window for
 // negative coordinates, and reports whether an element takes them there.
 func (rt *engine) fileDrag(x, y float32) bool {
+	rt.coolTips() // tooltip.go: no tip while files are dragged
 	var over uint64
 	if x >= 0 && y >= 0 {
 		if s := rt.dropTarget(x, y); s != nil {

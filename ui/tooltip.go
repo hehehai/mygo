@@ -32,14 +32,26 @@ type tooltips struct {
 	dismissed uint64
 	// lastShown is when a tip last showed, or went.
 	lastShown time.Time
+	// For TooltipRest: moved is when the pointer last moved, cooled when
+	// it last scrolled, pressed or dragged, shownSince when the tip of
+	// shown began to show, and faded whether it came after its delay
+	// (and fades in) rather than at once in the warm-up.
+	moved, cooled, shownSince time.Time
+	faded                     bool
 }
+
+// tipKey is the identity of the tip of an element, so that the tip of
+// the next element, in the warm-up, is a tip of its own, not this one
+// moving there.
+type tipKey struct{ anchor uint64 }
 
 // TooltipBase shows a tip without a look by anchor: fn styles the tip and
 // builds its content. It shows once the pointer has rested on anchor for
 // 0.6 seconds, at once as anchor gets the keyboard focus from the
 // keyboard, and at once too within 0.4 seconds of another tip going, as
 // the pointer moves along a toolbar; the theme's TooltipDelay changes
-// both. It goes as the pointer leaves anchor
+// both, its TooltipRest has them wait for the pointer to rest, and its
+// TooltipFadeIn and TooltipFadeOut fade the tip. It goes as the pointer leaves anchor
 // or presses it, as a menu or popover of anchor opens, and with Escape,
 // until the pointer comes back or the focus does; it does not show while
 // that menu or popover shows. Over elements inside one another, the
@@ -71,6 +83,7 @@ func tooltipBase(c *context, anchor *node, fn func(tip *node)) (*node, bool) {
 	// The theme the anchor builds with sets how long the pointer rests on
 	// it, which showTooltip reads from its state.
 	anchor.st.tipDelay, anchor.st.tipWarm = c.theme.tooltipDelay()
+	anchor.st.tipRest = c.theme.TooltipRest
 	rt := c.rt
 	// A press or a click on the anchor, by the pointer, the keys or
 	// assistive technology, hides its tip, as Base UI's closeOnClick: a
@@ -84,6 +97,10 @@ func tooltipBase(c *context, anchor *node, fn func(tip *node)) (*node, bool) {
 	var tip *node
 	coreOverlay(c, func() {
 		tip = coreBox(c).Absolute().IgnoreInput(true).Role(RoleTooltip)
+		if in, out := c.theme.TooltipFadeIn, c.theme.TooltipFadeOut; (in > 0 || out > 0) && !rt.preferences().ReduceMotion {
+			tip.Key(tipKey{anchor.id})
+			tip.Transition(rt.tips.fade(in, out))
+		}
 		fn(tip)
 		if tip.attach == 0 {
 			tip.AttachTo(anchor, AnchorTop, AnchorBottom)
@@ -147,9 +164,14 @@ func (rt *engine) showTooltip(c *context) uint64 {
 	}
 	t.frame, t.pass = rt.frame, rt.pass
 	now := c.now
-	if t.shown != 0 {
-		// The tip of the last frame showed until now.
+	prev := t.shown
+	if prev != 0 {
+		// The tip of the last frame showed until now, or, waiting for the
+		// pointer to rest, until a scroll, press or drag since hid it.
 		t.lastShown = now
+		if s := rt.states[prev]; s != nil && s.tipRest && !t.cooled.Before(t.shownSince) {
+			t.lastShown, prev = time.Time{}, 0
+		}
 	}
 	tipped := func(id uint64) bool {
 		s := rt.states[id]
@@ -188,6 +210,10 @@ func (rt *engine) showTooltip(c *context) uint64 {
 	if rt.pressed != nil && hover != 0 {
 		t.dismissed = hover
 	}
+	if s := rt.states[hover]; hover != 0 && s.tipRest && (rt.pressed != nil || rt.drag != nil || rt.incoming != nil || rt.dropOver != 0) {
+		// Pressed or dragging: no tip until the pointer rests again.
+		t.cooled = now
+	}
 	// An element whose menu or popover shows, in this frame or the last
 	// one, shows no tip: the pointer coming back to a menu button while
 	// its menu shows, or the focus coming back to it as the menu closes,
@@ -204,17 +230,96 @@ func (rt *engine) showTooltip(c *context) uint64 {
 		focus = 0
 	}
 	t.shown, t.byFocus = 0, false
+	fs := rt.states[focus]
+	focusRest := focus != 0 && fs != nil && fs.tipRest
 	switch {
-	case focus != 0 && (hover == 0 || !t.focusSince.Before(t.hoverSince)):
-		t.shown, t.byFocus = focus, true
+	case focusRest && !t.focusSince.Before(t.hoverSince):
+		// Waiting for rest, the focus's tip shows after the delay, and
+		// only while the pointer has not gone onto another element since.
+		if t.rested(rt, now, prev, focus, fs, t.focusSince) {
+			t.shown, t.byFocus = focus, true
+		}
+	case focus != 0 && !focusRest && (hover == 0 || !t.focusSince.Before(t.hoverSince)):
+		t.shown, t.byFocus, t.faded = focus, true, true
 	case hover != 0:
 		s := rt.states[hover]
+		if s.tipRest {
+			if t.rested(rt, now, prev, hover, s, latest(t.hoverSince, t.moved, t.cooled)) {
+				t.shown = hover
+			}
+			break
+		}
 		warm := !t.lastShown.IsZero() && t.hoverSince.Sub(t.lastShown) <= s.tipWarm
-		if wait := s.tipDelay - now.Sub(t.hoverSince); wait > 0 && !warm {
+		wait := s.tipDelay - now.Sub(t.hoverSince)
+		if wait > 0 && !warm {
 			rt.scheduleAt(now.Add(wait))
 			break
 		}
-		t.shown = hover
+		t.shown, t.faded = hover, wait <= 0
+	}
+	if t.shown != 0 && t.shown != prev {
+		t.shownSince = now
 	}
 	return t.shown
+}
+
+// rested reports whether the tip of id, whose state is s, shows in a frame
+// at now, waiting for the pointer or the focus to rest (TooltipRest) since
+// since: at once if it showed in the last frame (prev), after s's delay,
+// or a sixth of it within the warm-up after another tip went. It asks for
+// the frame it is due in.
+func (t *tooltips) rested(rt *engine, now time.Time, prev, id uint64, s *state, since time.Time) bool {
+	if prev == id {
+		return true
+	}
+	delay := s.tipDelay
+	warm := !t.lastShown.IsZero() && t.lastShown.After(t.cooled) && since.Sub(t.lastShown) <= s.tipWarm
+	if warm {
+		delay /= 6
+	}
+	if wait := delay - now.Sub(since); wait > 0 {
+		rt.scheduleAt(now.Add(wait))
+		return false
+	}
+	t.faded = !warm
+	return true
+}
+
+// fade returns the transition of a tip fading in over in, as it shows
+// after its delay, and out over out: one shown at once in the warm-up
+// comes without fading in.
+func (t *tooltips) fade(in, out time.Duration) ElementTransition {
+	f := ElementTransition{Duration: max(in, time.Millisecond), Ease: EaseOut, ExitDuration: out, Colors: true}
+	if out <= 0 {
+		f.ExitDuration = -1
+	}
+	if in > 0 && t.faded {
+		f.Enter = &Motion{Opacity: 0}
+	}
+	if out > 0 {
+		f.Exit = &Motion{Opacity: 0}
+	}
+	return f
+}
+
+// coolTips notes a scroll or a drag over the window, which hides the tip
+// of an element waiting for the pointer to rest (TooltipRest) and ends
+// the warm-up.
+func (rt *engine) coolTips() {
+	t := &rt.tips
+	t.cooled = rt.now()
+	if s := rt.states[t.shown]; t.shown != 0 && s != nil && s.tipRest {
+		rt.requestFrame()
+	}
+}
+
+// latest returns the latest of times.
+func latest(times ...time.Time) time.Time {
+	var l time.Time
+	for _, at := range times {
+		if at.After(l) {
+			l = at
+		}
+	}
+	return l
 }

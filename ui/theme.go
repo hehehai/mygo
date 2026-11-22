@@ -110,6 +110,22 @@ type Theme struct {
 	// another tip goes, as the pointer moves along a toolbar, the next one
 	// shows at once: 0.4 seconds by default.
 	TooltipDelay time.Duration
+	// TooltipRest, if set, waits for the pointer to rest: a tip's delay
+	// counts from when the pointer last moved over the element, not from
+	// when it came onto it; the keyboard focus's tip waits the delay too,
+	// from when the focus moved, and does not show once the pointer has
+	// gone onto another element since; within the warm-up after another
+	// tip went, the next one shows once the pointer rests a sixth of the
+	// delay rather than at once; a scroll, a press or a drag (of a value
+	// or of what another app drags over the window) hides the tip and
+	// ends the warm-up. Off by default: tips as TooltipDelay says.
+	TooltipRest bool
+	// TooltipFadeIn and TooltipFadeOut, if set, fade a tip in as it shows
+	// after its delay (one shown at once, in the warm-up, comes at once)
+	// and out as it goes, as macOS fades its tooltips (about 130 and 100
+	// ms). 0, as by default, shows and hides it at once; so does a
+	// desktop asking for less motion (Preferences.ReduceMotion).
+	TooltipFadeIn, TooltipFadeOut time.Duration
 
 	// followed is what WithPreferences changed, nil where it has not.
 	followed *followedTheme
