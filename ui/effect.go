@@ -187,13 +187,45 @@ func layerPaint(e *node, dx, dy float32, lifting *node, view Rect) func(cp *Pain
 		// positions shift, and the transforms of those transformed are
 		// rebased into the layer's space, losing e's own if it has one,
 		// as a layer of e's content.
+		rt := cp.rt
+		mark := len(rt.layerWorlds)
+		rt.layerWorlds = keepWorlds(e, rt.layerWorlds)
 		shift(e, dx, dy)
 		unworld(e, world, dx, dy)
 		cp.element(e)
-		restoreVisual(e)
+		// Back to the transforms the subtree had, rather than those laid
+		// out (restoreVisual): within another layer's, or a dragged
+		// copy's, those are rebased into its space, in which what e
+		// paints after its layer, as flat when what the layer holds
+		// overlaps nothing, still paints.
+		takeWorlds(e, rt.layerWorlds[mark:])
+		clear(rt.layerWorlds[mark:])
+		rt.layerWorlds = rt.layerWorlds[:mark]
 		shift(e, -dx, -dy)
 		e.effecting = false
 	}
+}
+
+// keepWorlds appends the transforms of e's subtree, in order, to ws.
+func keepWorlds(e *node, ws []scene.Affine) []scene.Affine {
+	ws = append(ws, e.world)
+	for ch := e.first; ch != nil; ch = ch.next {
+		ws = keepWorlds(ch, ws)
+	}
+	return ws
+}
+
+// takeWorlds gives e's subtree the transforms keepWorlds kept in ws, in
+// the same order, and returns those left.
+func takeWorlds(e *node, ws []scene.Affine) []scene.Affine {
+	if len(ws) == 0 {
+		return ws
+	}
+	e.world, ws = ws[0], ws[1:]
+	for ch := e.first; ch != nil; ch = ch.next {
+		ws = takeWorlds(ch, ws)
+	}
+	return ws
 }
 
 // layerOp paints the top left w×h pixels of cv where they were drawn from,

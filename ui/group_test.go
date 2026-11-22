@@ -339,3 +339,67 @@ func TestLayerKeepsTransformedChildren(t *testing.T) {
 		}
 	}
 }
+
+// TestNestedGroupInLayer checks a faded element inside another one, both
+// painting into layers, at the window's scales: when the inner one's
+// layer, drawn within the outer one's, overlaps nothing, as its boxes moved
+// apart, it paints flat there, where they are. Its layer had put back the
+// transforms of its subtree as laid out, not as the outer layer had them
+// in its space, so that what it painted flat after moved by the outer
+// one's transform twice: the issue of a card scaled and faded, with a line
+// of text fading inside it, composited far from the card at 0.25 of the
+// window's scale.
+func TestNestedGroupInLayer(t *testing.T) {
+	white, gray, red := RGB(255, 255, 255), RGB(128, 128, 128), RGB(255, 0, 0)
+	for _, k := range []float32{1, 1.25} {
+		for _, scale := range []float32{0.25, 0.5, 1, 2} {
+			apart := false
+			tt := coreNewTester(func(c *context) {
+				full := func() *node { return coreBox(c).Absolute().Left(0).Top(0).Size(400, 240) }
+				full().Background(white).Children(func() {
+					full().TransformOrigin(0, 0).Translate(80, 40).Scale(k, k).Opacity(0.5).Children(func() {
+						coreBox(c).Absolute().Left(0).Top(0).Size(200, 120).Background(gray)
+						full().Opacity(0.5).Children(func() {
+							x := float32(60)
+							if apart {
+								x = 120
+							}
+							coreBox(c).Absolute().Left(20).Top(30).Size(60, 60).Background(red)
+							coreBox(c).Absolute().Left(x).Top(30).Size(60, 60).Background(red)
+						})
+					})
+				})
+			}, 400, 240)
+			tt.SetScale(scale)
+			for _, a := range []bool{false, true, true} {
+				apart = a
+				tt.Frame()
+				img := tt.Image()
+				at := func(x, y float32) image.Point {
+					return image.Pt(int((80+k*x)*scale), int((40+k*y)*scale))
+				}
+				reddish := func(p image.Point) bool {
+					c := img.RGBAAt(p.X, p.Y)
+					return int(c.R)-int(c.G) > 40
+				}
+				second := float32(90)
+				if a {
+					second = 150
+				}
+				for _, x := range []float32{50, second} {
+					if p := at(x, 60); !reddish(p) {
+						t.Errorf("scale %g, k %g, apart %v: at %v %v, want the red box", scale, k, a, p, img.RGBAAt(p.X, p.Y))
+					}
+				}
+				// The other boxes painted nothing red beyond the card.
+				for y := 0; y < img.Rect.Dy(); y++ {
+					for x := int((80 + k*200) * scale); x < img.Rect.Dx(); x++ {
+						if reddish(image.Pt(x, y)) {
+							t.Fatalf("scale %g, k %g, apart %v: red at %d, %d, beyond the card", scale, k, a, x, y)
+						}
+					}
+				}
+			}
+		}
+	}
+}
