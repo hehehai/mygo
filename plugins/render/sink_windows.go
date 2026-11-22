@@ -71,6 +71,13 @@ var (
 	mfTranscodeContainer   = guid{0x150ff23f, 0x4abc, 0x478b, [8]byte{0xac, 0x4f, 0xe1, 0x91, 0x6f, 0xba, 0x1c, 0xca}}
 	mfContainerMPEG4       = guid{0xdc6cd05d, 0xb9d0, 0x40ef, [8]byte{0xbd, 0x35, 0xfa, 0x62, 0x2c, 0x1a, 0xb2, 0x8a}}
 
+	// The properties of ICodecAPI, which the sink writer gives the
+	// encoder.
+	codecAPIRateControlMode = guid{0x1c0608e9, 0x370c, 0x4710, [8]byte{0x8a, 0x58, 0xcb, 0x61, 0x81, 0xc4, 0x24, 0x23}}
+	codecAPIMeanBitRate     = guid{0xf7222374, 0x2144, 0x4815, [8]byte{0xb5, 0x50, 0xa3, 0x7f, 0x8e, 0x12, 0xee, 0x52}}
+	codecAPIMaxBitRate      = guid{0x9651eae4, 0x39b9, 0x4ebf, [8]byte{0x85, 0xef, 0xd7, 0xf4, 0x44, 0xec, 0x74, 0x65}}
+	codecAPIBufferSize      = guid{0x0db96574, 0xb6a4, 0x4c8b, [8]byte{0x81, 0x06, 0x37, 0x73, 0xde, 0x03, 0x10, 0xcd}}
+
 	mfMediaTypeVideo  = mfGUID(0x73646976) // 'vids'
 	mfMediaTypeAudio  = mfGUID(0x73647561) // 'auds'
 	mfVideoFormatH264 = mfGUID(0x34363248) // 'H264'
@@ -186,6 +193,30 @@ func mediaType(as ...attr) (uintptr, error) {
 	return t, nil
 }
 
+// encodingParameters returns the encoder's ICodecAPI properties the sink
+// writer gives it, or 0 for none: peak constrained VBR, for
+// Options.RateLimits, whose bucket's size is in bytes.
+func encodingParameters(sp videoSpec) (uintptr, error) {
+	maxrate, bufsize := vbv(sp.limits)
+	if maxrate == 0 {
+		return 0, nil
+	}
+	const peakConstrainedVBR = 1 // eAVEncCommonRateControlMode_PeakConstrainedVBR
+	var params uintptr
+	if hr, _, _ := procMFCreateAttributes.Call(uintptr(unsafe.Pointer(&params)), 4); failed(hr) {
+		return 0, fmt.Errorf("render: Media Foundation: no attributes: %#x", uint32(hr))
+	}
+	if err := setAttrs(params,
+		attr{key: &codecAPIRateControlMode, value: peakConstrainedVBR},
+		attr{key: &codecAPIMeanBitRate, value: uint64(min(sp.bitrate, maxrate))},
+		attr{key: &codecAPIMaxBitRate, value: uint64(maxrate)},
+		attr{key: &codecAPIBufferSize, value: uint64(max(bufsize/8, 1))}); err != nil {
+		free(&params)
+		return 0, err
+	}
+	return params, nil
+}
+
 // mfSink writes a video with a Media Foundation sink writer.
 type mfSink struct {
 	spec         videoSpec
@@ -233,7 +264,11 @@ func (s *mfSink) open() error {
 	if hr, _, _ := procMFCreateSinkWriterFromURL.Call(uintptr(unsafe.Pointer(path)), 0, attrs, uintptr(unsafe.Pointer(&s.writer))); failed(hr) {
 		return fmt.Errorf("render: Media Foundation cannot write %s: %#x", sp.path, uint32(hr))
 	}
-	const progressive, bt709Primaries, bt709Transfer, bt709Matrix, range16to235, h264High, hevcMain = 2, 2, 5, 1, 2, 100, 1
+	const progressive, bt709Primaries, bt709Transfer, srgbTransfer, bt709Matrix, range16to235, h264High, hevcMain = 2, 2, 5, 7, 1, 2, 100, 1
+	transfer := uint64(bt709Transfer)
+	if sp.color.srgb() {
+		transfer = srgbTransfer
+	}
 	format, profile := &mfVideoFormatH264, uint64(h264High)
 	if sp.codec == HEVC {
 		format, profile = &mfVideoFormatHEVC, hevcMain
@@ -252,7 +287,7 @@ func (s *mfSink) open() error {
 		attr{key: &mfMTAvgBitrate, value: uint64(sp.bitrate)},
 		attr{key: &mfMTMPEG2Profile, value: profile},
 		attr{key: &mfMTVideoPrimaries, value: bt709Primaries},
-		attr{key: &mfMTTransferFunction, value: bt709Transfer},
+		attr{key: &mfMTTransferFunction, value: transfer},
 		attr{key: &mfMTYUVMatrix, value: bt709Matrix},
 		attr{key: &mfMTNominalRange, value: range16to235})...)
 	if err != nil {
@@ -272,14 +307,19 @@ func (s *mfSink) open() error {
 		attr{key: &mfMTSubtype, guid: &mfVideoFormatNV12},
 		attr{key: &mfMTDefaultStride, value: uint64(sp.w)},
 		attr{key: &mfMTVideoPrimaries, value: bt709Primaries},
-		attr{key: &mfMTTransferFunction, value: bt709Transfer},
+		attr{key: &mfMTTransferFunction, value: transfer},
 		attr{key: &mfMTYUVMatrix, value: bt709Matrix},
 		attr{key: &mfMTNominalRange, value: range16to235})...)
 	if err != nil {
 		return err
 	}
 	defer free(&in)
-	if hr := call(s.writer, writerSetInputMediaType, uintptr(s.video), in, 0); failed(hr) {
+	params, err := encodingParameters(sp)
+	if err != nil {
+		return err
+	}
+	defer free(&params)
+	if hr := call(s.writer, writerSetInputMediaType, uintptr(s.video), in, params); failed(hr) {
 		if uint32(hr) == mfCodecNotFound {
 			return fmt.Errorf("render: %w: Windows has no %v encoder (for HEVC, the HEVC Video Extensions): encode it with Options{Encoder: render.FFmpeg}", errors.ErrUnsupported, sp.codec)
 		}

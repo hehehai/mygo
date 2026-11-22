@@ -59,7 +59,8 @@ func newFFmpegSink(ctx context.Context, spec videoSpec) (_ sink, err error) {
 		args = append(args, "-b:a", strconv.Itoa(spec.audioBitrate))
 	}
 	args = append(args, s.videoArgs()...)
-	args = append(args, "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", spec.path)
+	args = append(args, s.colorArgs()...)
+	args = append(args, spec.path)
 	// -nostdin keeps ffmpeg from reading keys; the frames come on its
 	// standard input all the same, as pipe:0.
 	s.cmd = exec.CommandContext(ctx, path, args...)
@@ -131,10 +132,30 @@ func (s *ffmpegSink) videoArgs() []string {
 			a = append(a, "-crf", "31", "-b:v", "0")
 		}
 	}
+	if maxrate, bufsize := vbv(sp.limits); maxrate > 0 && (sp.codec == H264 || sp.codec == HEVC || sp.codec == VP9) {
+		// The VBV of x264 and x265, libvpx's buffer.
+		a = append(a, "-maxrate", strconv.Itoa(maxrate), "-bufsize", strconv.Itoa(bufsize))
+	}
 	if sp.container == mp4 {
 		a = append(a, "-movflags", "+faststart")
 	}
 	return a
+}
+
+// colorArgs returns ffmpeg's arguments of the frames' colorimetry: the
+// conversion of the BGRA frames to YUV, with BT.709's matrix in the range
+// of video, and the tags of the stream and of the colr box. Without its
+// filter, ffmpeg 6 converts with BT.601's matrix, and ffmpeg 8 drops the
+// tags the encoder is given.
+func (s *ffmpegSink) colorArgs() []string {
+	trc := "bt709"
+	if s.spec.color.srgb() {
+		trc = "iec61966-2-1"
+	}
+	return []string{
+		"-vf", "scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=" + trc + ":colorspace=bt709:range=tv",
+		"-color_primaries", "bt709", "-color_trc", trc, "-colorspace", "bt709",
+	}
 }
 
 func (s *ffmpegSink) frame(_ int, pix []byte) error {

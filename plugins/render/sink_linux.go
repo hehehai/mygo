@@ -117,28 +117,31 @@ func gerror(gerr uintptr) string {
 
 // gstEncoder is an encoder element: its description, with %k the bitrate
 // in kb/s, %b in b/s and %g the frames between keyframes, the raw format
-// it takes, and the parser after it.
+// it takes, and the parser after it; and what it adds to its description
+// for Options.RateLimits, the leaky bucket of vbv, with %M its rate in
+// kb/s, %m in b/s and %V its size in kb, "" where it ignores them.
 type gstEncoder struct {
 	name, desc, format, parser string
+	limits                     string
 }
 
 var gstEncoders = map[Codec][]gstEncoder{
 	H264: {
-		{"vah264enc", "vah264enc bitrate=%k key-int-max=%g", "NV12", "h264parse"},
-		{"vaapih264enc", "vaapih264enc bitrate=%k keyframe-period=%g", "NV12", "h264parse"},
-		{"nvh264enc", "nvh264enc bitrate=%k gop-size=%g", "NV12", "h264parse"},
-		{"x264enc", "x264enc bitrate=%k key-int-max=%g speed-preset=medium", "I420", "h264parse"},
-		{"openh264enc", "openh264enc bitrate=%b gop-size=%g", "I420", "h264parse"},
+		{"vah264enc", "vah264enc bitrate=%k key-int-max=%g", "NV12", "h264parse", ""},
+		{"vaapih264enc", "vaapih264enc bitrate=%k keyframe-period=%g", "NV12", "h264parse", ""},
+		{"nvh264enc", "nvh264enc bitrate=%k gop-size=%g", "NV12", "h264parse", " max-bitrate=%M vbv-buffer-size=%V"},
+		{"x264enc", "x264enc bitrate=%k key-int-max=%g speed-preset=medium", "I420", "h264parse", " option-string=\"vbv-maxrate=%M:vbv-bufsize=%V\""},
+		{"openh264enc", "openh264enc bitrate=%b gop-size=%g", "I420", "h264parse", " max-bitrate=%m"},
 	},
 	HEVC: {
-		{"vah265enc", "vah265enc bitrate=%k key-int-max=%g", "NV12", "h265parse"},
-		{"vaapih265enc", "vaapih265enc bitrate=%k keyframe-period=%g", "NV12", "h265parse"},
-		{"nvh265enc", "nvh265enc bitrate=%k gop-size=%g", "NV12", "h265parse"},
-		{"x265enc", "x265enc bitrate=%k key-int-max=%g speed-preset=medium", "I420", "h265parse"},
+		{"vah265enc", "vah265enc bitrate=%k key-int-max=%g", "NV12", "h265parse", ""},
+		{"vaapih265enc", "vaapih265enc bitrate=%k keyframe-period=%g", "NV12", "h265parse", ""},
+		{"nvh265enc", "nvh265enc bitrate=%k gop-size=%g", "NV12", "h265parse", " max-bitrate=%M vbv-buffer-size=%V"},
+		{"x265enc", "x265enc bitrate=%k key-int-max=%g speed-preset=medium", "I420", "h265parse", " option-string=\"vbv-maxrate=%M:vbv-bufsize=%V\""},
 	},
 	VP9: {
-		{"vavp9enc", "vavp9enc bitrate=%k key-int-max=%g", "NV12", ""},
-		{"vp9enc", "vp9enc target-bitrate=%b keyframe-max-dist=%g end-usage=vbr deadline=1 cpu-used=4 row-mt=true", "I420", ""},
+		{"vavp9enc", "vavp9enc bitrate=%k key-int-max=%g", "NV12", "", ""},
+		{"vp9enc", "vp9enc target-bitrate=%b keyframe-max-dist=%g end-usage=vbr deadline=1 cpu-used=4 row-mt=true", "I420", "", ""},
 	},
 }
 
@@ -153,6 +156,26 @@ var gstAudioEncoders = map[container][]string{
 // between keyframes.
 func expand(desc string, bitrate, gop int) string {
 	return strings.NewReplacer("%k", strconv.Itoa(max(bitrate/1000, 1)), "%b", strconv.Itoa(bitrate), "%g", strconv.Itoa(gop)).Replace(desc)
+}
+
+// encoderDesc returns the description of the encoder of spec's frames.
+func (e *gstEncoder) encoderDesc(spec videoSpec, gop int) string {
+	desc := expand(e.desc, spec.bitrate, gop)
+	if maxrate, bufsize := vbv(spec.limits); maxrate > 0 && e.limits != "" {
+		desc += strings.NewReplacer("%M", strconv.Itoa(max(maxrate/1000, 1)), "%m", strconv.Itoa(maxrate),
+			"%V", strconv.Itoa(max(bufsize/1000, 1))).Replace(e.limits)
+	}
+	return desc
+}
+
+// colorimetry returns GStreamer's colorimetry of the frames: range,
+// matrix, transfer and primaries, by GstVideoColorimetry's numbers.
+func colorimetry(c Colorimetry) string {
+	if c.srgb() {
+		// 16-235, BT.709's matrix, sRGB's transfer, BT.709's primaries.
+		return "2:3:7:1"
+	}
+	return "bt709"
 }
 
 func hasElement(name string) bool {
@@ -278,8 +301,8 @@ func newVideoSink(spec videoSpec, _ drawer) (sink, error) {
 	gop := int(2 * (spec.num + spec.den/2) / spec.den)
 	frame := spec.w * spec.h * 4
 	desc := fmt.Sprintf("appsrc name=video format=time block=true max-bytes=%d caps=\"video/x-raw,format=BGRA,width=%d,height=%d,framerate=%d/%d,pixel-aspect-ratio=1/1\""+
-		" ! videoconvert ! video/x-raw,format=%s,colorimetry=bt709 ! queue ! %s%s ! %s name=mux ! filesink location=%s",
-		3*frame, spec.w, spec.h, spec.num, spec.den, enc.format, expand(enc.desc, spec.bitrate, gop), parser, mux, quote(spec.path))
+		" ! videoconvert ! video/x-raw,format=%s,colorimetry=%s ! queue ! %s%s ! %s name=mux ! filesink location=%s",
+		3*frame, spec.w, spec.h, spec.num, spec.den, enc.format, colorimetry(spec.color), enc.encoderDesc(spec, gop), parser, mux, quote(spec.path))
 	if spec.sound != nil {
 		var aenc string
 		for _, a := range gstAudioEncoders[spec.container] {
