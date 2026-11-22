@@ -121,6 +121,9 @@ type host interface {
 type engine struct {
 	// inlineRects is placeInline's scratch, kept from frame to frame.
 	inlineRects []text.Rect
+	// layerWorlds holds the transforms of the subtrees layers paint
+	// (layerPaint) while they do, kept from frame to frame.
+	layerWorlds []scene.Affine
 	// unsmoothed draws the window's text without font smoothing
 	// (Content.FontSmoothing).
 	unsmoothed bool
