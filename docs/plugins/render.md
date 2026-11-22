@@ -151,6 +151,50 @@ the `Codec`, `Bitrate` and `AudioBitrate`; and `Progress`, called after
 each frame with how far the render is and what draws it, as
 `Metal (Apple M2)`. Canceling `ctx` stops the render.
 
+### Peaks of the bitrate, and colours
+
+`Bitrate` is an average: an encoder spends more of it where the frames
+change most, and a second of a 10 Mb/s video can take 26 Mb.
+`Options.RateLimits` caps that: each `render.RateLimit{Bytes, Per}` keeps
+any span of `Per` of the video to `Bytes`.
+
+```go
+err := render.Video(ctx, comp, "out.mp4", render.Options{
+	Bitrate:     10_000_000,
+	// 12 Mb in any second, which VideoToolbox keeps to with a quarter second's limit.
+	RateLimits:  []render.RateLimit{{Bytes: 1_500_000, Per: time.Second}, {Bytes: 375_000, Per: time.Second / 4}},
+	Colorimetry: render.SRGB,
+})
+```
+
+H.264 and HEVC take limits, and VP9 with ffmpeg; ProRes ignores them.
+VideoToolbox keeps to each limit itself
+(`kVTCompressionPropertyKey_DataRateLimits`), as a target it overshoots
+a little: on frames of noise, an M4 Mac's H.264 and HEVC encoders
+put up to 14% more into a second than a lone limit of a second allows.
+A limit of a quarter of the bytes in a quarter of the time beside it,
+`{Bytes: b / 4, Per: time.Second / 4}`, keeps the seconds under theirs.
+Frames it cannot make smaller at its coarsest quantizer still take what
+they take. The other encoders keep to a leaky bucket that holds all
+the limits: drained at three quarters of the tightest limit's rate, a
+quarter of the least `Bytes` deep, so that any span of `Per` takes at
+most `Bytes`, at the cost of a sustained rate of three quarters of the
+limit's. ffmpeg (x264, x265, libvpx) takes it as `-maxrate` and
+`-bufsize`; GStreamer's x264, x265, NVENC and OpenH264 encoders as their
+VBV or maximum bitrate; Media Foundation as peak constrained VBR
+(`CODECAPI_AVEncCommonRateControlMode` and its maximum bitrate and buffer
+size). GStreamer's VA-API encoders and VP9 ignore them.
+
+`Options.Colorimetry` is what the video tells players its colours are,
+by the code points of ITU-T H.273, in the H.264 or HEVC stream and the
+file's `colr` box: `render.BT709` (1-1-1, the default), or `render.SRGB`
+(1-13-1: BT.709's primaries and matrix, sRGB's transfer), which is what
+the pixels a view draws are. It changes no pixel. AVFoundation writes it
+into both (`AVVideoColorPropertiesKey`), as do ffmpeg and GStreamer (its
+caps' colorimetry, `2:3:7:1` for sRGB); Media Foundation tags its media
+types with it (`MF_MT_TRANSFER_FUNCTION`) and writes into the MP4 what
+it does of them. Other colorimetries are an error.
+
 ## Codecs and platforms
 
 The frames are drawn by Metal on macOS, Direct3D 11 on Windows, and

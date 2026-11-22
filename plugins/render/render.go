@@ -176,6 +176,23 @@ type Options struct {
 	Codec        Codec
 	Bitrate      int
 	AudioBitrate int
+	// RateLimits cap the video's bitrate over spans of time, which
+	// Bitrate's average lets go far above it for a while: each keeps any
+	// of its spans of the video to its bytes. H.264 and HEVC take them,
+	// and VP9 with ffmpeg; none by default. VideoToolbox keeps to each
+	// (kVTCompressionPropertyKey_DataRateLimits) as a target it
+	// overshoots by up to a seventh, unless a limit of a quarter of the
+	// time and the bytes is beside it. The other encoders keep to a
+	// leaky bucket that holds all of them (vbv): x264's and x265's VBV,
+	// libvpx's buffer, NVENC's and OpenH264's maximum bitrate, Media
+	// Foundation's peak constrained VBR. VA-API's encoders of Linux, and
+	// VP9 of GStreamer, ignore them.
+	RateLimits []RateLimit
+	// Colorimetry is what the video tells players its colours are, in
+	// its stream and its file's colr box: BT709 when zero, or SRGB.
+	// Media Foundation tags its media types with it, and writes what it
+	// does of them into the file.
+	Colorimetry Colorimetry
 	// Encoder is what encodes Video's frames: the system's media
 	// framework, or ffmpeg (FFmpeg), for formats the system has no
 	// encoder of.

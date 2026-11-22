@@ -102,6 +102,7 @@ func loadAV() error {
 		cv := open("/System/Library/Frameworks/CoreVideo.framework/CoreVideo")
 		cm := open("/System/Library/Frameworks/CoreMedia.framework/CoreMedia")
 		cf := open("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+		vt := open("/System/Library/Frameworks/VideoToolbox.framework/VideoToolbox")
 		msgSend, err := purego.Dlsym(objcLib, "objc_msgSend")
 		if err != nil {
 			panic(err)
@@ -147,10 +148,17 @@ func loadAV() error {
 				avKeys[name] = *(*uintptr)(cptr(p))
 			}
 		}
-		// The alpha mode of ProRes 4444's pixel buffers, from macOS 12.
-		for _, name := range []string{"kCVImageBufferAlphaChannelModeKey", "kCVImageBufferAlphaChannelMode_PremultipliedAlpha"} {
-			if p, err := purego.Dlsym(cv, name); err == nil && p != 0 {
-				avKeys[name] = *(*uintptr)(cptr(p))
+		// The alpha mode of ProRes 4444's pixel buffers, from macOS 12;
+		// sRGB's transfer function and the limits of the data rate, which
+		// only Options ask for.
+		for lib, names := range map[uintptr][]string{
+			cv: {"kCVImageBufferAlphaChannelModeKey", "kCVImageBufferAlphaChannelMode_PremultipliedAlpha", "kCVImageBufferTransferFunction_sRGB"},
+			vt: {"kVTCompressionPropertyKey_DataRateLimits"},
+		} {
+			for _, name := range names {
+				if p, err := purego.Dlsym(lib, name); err == nil && p != 0 {
+					avKeys[name] = *(*uintptr)(cptr(p))
+				}
 			}
 		}
 		if class("AVAssetWriter") == 0 {
@@ -180,6 +188,13 @@ func key(name string) objc.ID { return objc.ID(avKeys[name]) }
 func nsString(s string) objc.ID { return send(class("NSString"), "stringWithUTF8String:", s) }
 
 func nsInt(n int64) objc.ID { return send(class("NSNumber"), "numberWithLongLong:", n) }
+
+func nsFloat(f float64) objc.ID { return send(class("NSNumber"), "numberWithDouble:", f) }
+
+// nsArray returns an autoreleased array of the values.
+func nsArray(vs ...objc.ID) objc.ID {
+	return send(class("NSArray"), "arrayWithObjects:count:", unsafe.Pointer(&vs[0]), uint(len(vs)))
+}
 
 // nsDict returns an autoreleased dictionary of the keys and values.
 func nsDict(kv ...objc.ID) objc.ID {
@@ -290,13 +305,19 @@ func (s *avSink) open() error {
 	send(s.writer, "setMovieTimeScale:", mediaTimeScale(sp.num))
 	codec := map[Codec]string{H264: "AVVideoCodecTypeH264", HEVC: "AVVideoCodecTypeHEVC",
 		ProRes: "AVVideoCodecTypeAppleProRes422HQ", ProRes4444: "AVVideoCodecTypeAppleProRes4444"}[sp.codec]
+	transfer := key("AVVideoTransferFunction_ITU_R_709_2")
+	if sp.color.srgb() {
+		if transfer = key("kCVImageBufferTransferFunction_sRGB"); transfer == 0 {
+			return fmt.Errorf("render: %w: this macOS has no sRGB transfer function", errors.ErrUnsupported)
+		}
+	}
 	settings := []objc.ID{
 		key("AVVideoCodecKey"), key(codec),
 		key("AVVideoWidthKey"), nsInt(int64(sp.w)),
 		key("AVVideoHeightKey"), nsInt(int64(sp.h)),
 		key("AVVideoColorPropertiesKey"), nsDict(
 			key("AVVideoColorPrimariesKey"), key("AVVideoColorPrimaries_ITU_R_709_2"),
-			key("AVVideoTransferFunctionKey"), key("AVVideoTransferFunction_ITU_R_709_2"),
+			key("AVVideoTransferFunctionKey"), transfer,
 			key("AVVideoYCbCrMatrixKey"), key("AVVideoYCbCrMatrix_ITU_R_709_2")),
 	}
 	if sp.codec == H264 || sp.codec == HEVC {
@@ -309,9 +330,27 @@ func (s *avSink) open() error {
 		if sp.codec == H264 {
 			props = append(props, key("AVVideoProfileLevelKey"), key("AVVideoProfileLevelH264HighAutoLevel"))
 		}
+		if len(sp.limits) > 0 {
+			limits := key("kVTCompressionPropertyKey_DataRateLimits")
+			if limits == 0 {
+				return fmt.Errorf("render: %w: this macOS has no limits of the data rate", errors.ErrUnsupported)
+			}
+			// Pairs of bytes and the seconds they are at most in.
+			var pairs []objc.ID
+			for _, l := range sp.limits {
+				pairs = append(pairs, nsInt(int64(l.Bytes)), nsFloat(l.Per.Seconds()))
+			}
+			props = append(props, limits, nsArray(pairs...))
+		}
 		settings = append(settings, key("AVVideoCompressionPropertiesKey"), nsDict(props...))
 	}
-	s.video = send(send(class("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:", key("AVMediaTypeVideo"), nsDict(settings...)), "retain")
+	out := nsDict(settings...)
+	// AVFoundation raises an exception, which ends the process, on
+	// settings it does not take: those Options add are asked first.
+	if (len(sp.limits) > 0 || sp.color.srgb()) && byte(send(s.writer, "canApplyOutputSettings:forMediaType:", out, key("AVMediaTypeVideo"))) == 0 {
+		return fmt.Errorf("render: AVFoundation takes no %v of these settings", sp.codec)
+	}
+	s.video = send(send(class("AVAssetWriterInput"), "assetWriterInputWithMediaType:outputSettings:", key("AVMediaTypeVideo"), out), "retain")
 	if s.video == 0 {
 		return errors.New("render: AVFoundation takes no input of these settings")
 	}
