@@ -99,3 +99,6 @@ Commits on `main` since upstream v0.10.0 (merges left out). Patches upstream had
 | `d5b2680b` | ui: test that After pauses with WindowHidden while the window is hidden | AudioSmith third_party/mygo-patches/0014-after-waits-while-occluded.patch (not carried) |
 | `3eb39cef` | internal/uimigrate: the ui API with G5's additions | (fork maintenance) |
 | `afc3cde8` | ui: pad node to a whole number of cache lines after the fork's fields | (fork maintenance) |
+| `bd10f07a` | render: Options.RateLimits and Options.Colorimetry | Onda (fino) request 2026-11-22 |
+| `15e2e842` | render: ffmpeg converts the frames with BT.709's matrix and keeps the tags | Onda (fino) request 2026-11-22 |
+| `c10cb353` | ui: a layer inside another layer gives its subtree back the outer one's transforms | Onda (fino) report 2026-11-22, Fino docs/v2/m1-wp2-mygo-layer.md |
