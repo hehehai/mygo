@@ -103,3 +103,4 @@ Commits on `main` since upstream v0.10.0 (merges left out). Patches upstream had
 | `15e2e842` | render: ffmpeg converts the frames with BT.709's matrix and keeps the tags | Onda (fino) request 2026-11-22 |
 | `c10cb353` | ui: a layer inside another layer gives its subtree back the outer one's transforms | Onda (fino) report 2026-11-22, Fino docs/v2/m1-wp2-mygo-layer.md |
 | `bc0e602d` | ui: Theme.TooltipRest and TooltipFadeIn/Out: a tip waits for the pointer (or the focus) to rest, a short warm-up, scrolls/presses/drags hide it; fades in and out, not under ReduceMotion. Off by default: other apps unchanged (TestTooltipDefaultUnchanged) | Act request 2026-11-22 (thread #429) |
+| `9117b3dc` | ui.SetLowLatency: display sync off (macOS) while the app wants edits shown at once; Metal latency diagnostics | Onda (fino) WP4 request 2026-11-23, Fino docs/v2/m2-perf.md §6 |
