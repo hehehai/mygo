@@ -465,8 +465,11 @@ type Renderer struct {
 	// withWindow tells that the window wants frames presented with its
 	// changes (SetWithWindow), withWindowWas that the last frame's did.
 	withWindow, withWindowWas bool
-	pre                       presenter
-	pending                   pendingFrame
+	// lowLatency tells that the layer's display sync is off for
+	// pacing.LowLatency (ui.SetLowLatency; latency.go).
+	lowLatency bool
+	pre        presenter
+	pending    pendingFrame
 	// post runs a function on the main thread (SetPost), fetched has the
 	// presenter's thread draw pending through it, and wake is what Ready
 	// was given while a frame was pending.
@@ -559,7 +562,7 @@ func New(layer uintptr) (r *Renderer, err error) {
 		// slots have a frame in flight while the display shows a third.
 		// They cost a frame of memory until the window idles (trim).
 		if respondsTo(ml, "setMaximumDrawableCount:") {
-			send(ml, "setMaximumDrawableCount:", 3)
+			send(ml, "setMaximumDrawableCount:", uintptr(latencyDrawables))
 		}
 		// Uncapped (MYGO_UNCAPPED), a drawable presents as soon as the
 		// GPU has drawn it, not at the display's next refresh, as
@@ -567,7 +570,7 @@ func New(layer uintptr) (r *Renderer, err error) {
 		// they draw. The window server still composites a window once a
 		// refresh, showing the newest frame, without tearing; only a
 		// window it shows directly, full screen, may show frames torn.
-		if pacing.Uncapped && respondsTo(ml, "setDisplaySyncEnabled:") {
+		if (pacing.Uncapped || latencyNoSync) && respondsTo(ml, "setDisplaySyncEnabled:") {
 			send(ml, "setDisplaySyncEnabled:", 0)
 		}
 		// The first frame shows with the window's other changes; render
@@ -1808,6 +1811,7 @@ func (r *Renderer) render(s *scene.Scene) error {
 	if r.wide {
 		r.cur = &r.formats[1]
 	}
+	r.followLowLatency()
 	changed := r.setLayerWide(r.wide)
 	changed = r.fit(s.Width, s.Height, scale) || changed
 	// A frame changing the layer, or showing web views, which move with
@@ -1893,7 +1897,9 @@ func (r *Renderer) render(s *scene.Scene) error {
 		send(cb, "presentDrawable:", drawable)
 		send(cb, "commit")
 		// The next frame's drawable, while this one is shown.
-		r.pre.start(r.layer)
+		if !latencyNoPrefetch {
+			r.pre.start(r.layer)
+		}
 	}
 	r.track(cb)
 	r.lastRender = time.Now()

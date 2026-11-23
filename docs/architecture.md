@@ -95,7 +95,7 @@ framework safely. Read it before changing anything under `internal/`.
 │   ├── watchdriver/    the goroutine that runs a backend's file watcher
 │   ├── bridge/         embeds bridge.js, built from packages/bridge
 │   ├── surface/        the connection between a window and its native UI
-│   ├── pacing/         whether frames wait for the display (MYGO_UNCAPPED)
+│   ├── pacing/         whether frames wait for the display (MYGO_UNCAPPED, SetLowLatency)
 │   ├── scene/          display lists and glyph atlases, what renderers draw
 │   ├── media/          the contract between ui's VideoPlayer and ui/video's engines
 │   ├── text/           fonts, shaping, line breaking, editing, glyph rasterization
@@ -3643,6 +3643,16 @@ either.
   With `MYGO_FRAME_STATS` too, the engine logs how many frames came each
   second (`frameStats.rate`), counted anew after a pause or a frame as long
   (250 ms), and each frame's path says uncapped.
+  `ui.SetLowLatency` sets `pacing.LowLatency` (atomic), which the Metal
+  renderer compares as each frame renders (`followLowLatency`,
+  `internal/gpu/metal/latency.go`), turning its layer's
+  `displaySyncEnabled` off or on again when it changed: frames stay paced
+  by the display link, but a drawable no longer queues behind those
+  presented before it. Other renderers do not read it. The same file reads
+  `MYGO_METAL_DRAWABLES`, `MYGO_METAL_NO_PREFETCH` and
+  `MYGO_METAL_DISPLAY_SYNC` once, diagnostics that change the layer's
+  drawable count, the prefetch of the next drawable (`presenter`) and
+  display sync for the whole run.
 - **Video of the system's media framework** (`ui/video`,
   `ui/engine_video.go`, `internal/media`, `scene.Surface`). A
   `media.Engine` plays one video: AVFoundation's `AVPlayer` with an

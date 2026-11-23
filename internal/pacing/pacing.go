@@ -17,6 +17,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 )
 
 // Uncapped tells that MYGO_UNCAPPED asked frames to present without
@@ -47,3 +48,11 @@ func Setting(v string) bool {
 	log.Printf("mygo: MYGO_UNCAPPED=%q is neither 1 nor 0: frames stay paced by the display", v)
 	return false
 }
+
+// LowLatency: frames go to the window server as soon as drawn, which
+// shows the newest at each refresh, rather than queued behind the
+// drawables presented before them (CAMetalLayer.displaySyncEnabled off,
+// frames still paced by the display link): an edit shows a refresh or
+// two sooner while frames keep coming, but frames come less evenly
+// (ui.SetLowLatency).
+var LowLatency atomic.Bool
