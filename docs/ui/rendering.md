@@ -81,3 +81,44 @@ platform does:
 A game's steps keep their rate uncapped: [`game.View`](../plugins/game.md)
 runs `Update` 60 times a second of time passed, however many frames
 come, and `Draw` with how far each frame is into the next step.
+
+### Low latency
+
+Paced frames on macOS queue for the display: a drawable presented waits
+behind those presented before it, so while frames keep coming, as a
+video plays or an animation runs, a change shows a refresh or two after
+its frame presented. `ui.SetLowLatency(true)` turns the windows'
+`CAMetalLayer.displaySyncEnabled` off from their next frame, frames still
+paced by the display link: each drawable goes to the window server as
+soon as the GPU drew it, and the window server composites the newest at
+each refresh. A change then shows sooner, but frames come less evenly,
+reaching the window server at any time within a refresh.
+`ui.SetLowLatency(false)` turns display sync back on, as by default.
+
+It is meant to be switched while the app runs, not set once: a video
+editor sets it while paused and editing, and clears it to play. In a
+video editor on a 60 Hz MacBook Air, display sync off while paused took
+an edit from its patch to the display in 48 ms rather than 79 (p95) as
+an agent made it, and in 40 ms rather than 50 as the user did; off
+during playback, an edit showed in 64 ms rather than 96, but playback
+fell to 56 frames a second, about 100 of 10 s of frames coming more than
+25 ms apart.
+
+The setting is process-wide and takes effect at the next frame each
+window draws; a window that draws nothing keeps its layer as it was until
+it does. It has no effect while `MYGO_UNCAPPED=1` or
+`MYGO_METAL_DISPLAY_SYNC=0` keep display sync off, and none on Windows,
+Linux, iOS or in browsers, where it is a no-op.
+
+### Metal latency diagnostics
+
+These variables, read once as the program starts, change how macOS
+windows present, to measure where a frame's latency goes (`go run
+./internal/inputlatency`). Unset, nothing changes; they are diagnostics,
+not settings for apps to ship with.
+
+| Variable | Effect |
+|---|---|
+| `MYGO_METAL_DRAWABLES=2` | The layer's `maximumDrawableCount` (2 or 3, default 3): one frame less queued, at the cost of frames waiting for a drawable on a 120 Hz display ([above](#rendering)). |
+| `MYGO_METAL_NO_PREFETCH=1` | No drawable fetched on another thread after a frame presents: each frame takes its own when it draws. |
+| `MYGO_METAL_DISPLAY_SYNC=0` | `displaySyncEnabled` off for every frame, as `ui.SetLowLatency(true)` for the whole run, frames still paced by the display link. |

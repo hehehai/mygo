@@ -252,7 +252,7 @@ func (r *Renderer) finishPending(prefetch bool) error {
 	}
 	send(p.cb, "presentDrawable:", drawable)
 	send(p.cb, "commit")
-	if prefetch {
+	if prefetch && !latencyNoPrefetch {
 		r.pre.start(r.layer)
 	}
 	r.track(p.cb)
