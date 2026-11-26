@@ -286,6 +286,37 @@ func pressDragger(rt *engine, chain []uint64, target *state) uint64 {
 	return 0
 }
 
+// rowAroundDragger returns the row of a list (or a table) around target
+// when target only drags a value (Drag, DragData: no click, focus, text or
+// moves of its own), as the name of a file a table drags out to Finder:
+// the row takes the press, which clicks and chooses it as a press beside
+// the element would, and target the drag once the pointer moves
+// (pressDragger, handPress). It returns nil otherwise, as for an element
+// that takes clicks itself, or a row disabled.
+func rowAroundDragger(rt *engine, chain []uint64, target *state) *state {
+	if target == nil || !target.drags() || target.flags&interactive != flagDraggable {
+		return nil
+	}
+	inside := false
+	for _, id := range chain {
+		s := rt.states[id]
+		switch {
+		case s == nil:
+		case s == target:
+			inside = true
+		case !inside:
+		case s.flags&flagDisabled != 0:
+			return nil
+		case s.flags&interactive != 0:
+			if s.flags&flagChoosable != 0 && s.flags&flagClickable != 0 {
+				return s
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
 // handPress gives the press to the element around the one pressed that
 // drags a value, once the pointer moves as far as starts a drag: the
 // element pressed has no click then. It returns that element, or nil.

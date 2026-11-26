@@ -603,6 +603,12 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
 			focus = s
 		}
 	}
+	// An element that only drags inside a list's row: the row takes the
+	// press, the element the drag (rowAroundDragger).
+	var dragger *state
+	if row := rowAroundDragger(rt, chain, target); row != nil {
+		dragger, target = target, row
+	}
 	keep := slices.ContainsFunc(chain, func(id uint64) bool {
 		s := rt.states[id]
 		return s != nil && s.flags&flagKeepFocus != 0
@@ -666,6 +672,9 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
 	}
 	rt.pressed, rt.pressButton, rt.pressClicks = target, button, clicks
 	rt.pressDragger = pressDragger(rt, chain, target)
+	if dragger != nil {
+		rt.pressDragger = dragger.id
+	}
 	target.pressed, target.pressButton, target.pressMods = true, button, mods
 	target.pressPointer, target.pressPressure = rt.pointerType, rt.pressure
 	target.pressPending = true
