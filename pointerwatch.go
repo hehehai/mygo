@@ -40,8 +40,8 @@ type PointerWatcher struct {
 // region of the watcher (SetRegions), into another or out of them, and
 // as content starts and stops being dragged, with what it is then. A
 // watcher has no regions until SetRegions; Stop ends it. It works on
-// macOS (event monitors: no permission is asked); elsewhere it returns
-// ErrPointerWatch.
+// macOS (event monitors: no permission is asked) and Windows; elsewhere
+// it returns ErrPointerWatch.
 func (s *ScreenModule) WatchPointer(fn func(PointerWatch)) (*PointerWatcher, error) {
 	needsApp("Screen.WatchPointer")
 	w := onMainValue(func() *PointerWatcher {

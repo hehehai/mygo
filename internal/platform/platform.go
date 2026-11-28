@@ -1405,7 +1405,7 @@ type KeyGiver interface {
 }
 
 // PointerWatcher is a Screen that tells where the pointer is while it
-// moves in any app (macOS).
+// moves in any app (macOS, Windows).
 type PointerWatcher interface {
 	// WatchPointer calls fn on the main thread with the pointer in screen
 	// coordinates at each move, drag, press and release of the primary
