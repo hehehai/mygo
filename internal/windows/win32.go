@@ -417,11 +417,13 @@ const (
 	smCyDoubleClk    = 37
 	smCxPaddedBorder = 92
 
-	vkShift   = 0x10
-	vkControl = 0x11
-	vkMenu    = 0x12
-	vkLWin    = 0x5B
-	vkRWin    = 0x5C
+	vkShift    = 0x10
+	vkControl  = 0x11
+	vkMenu     = 0x12
+	vkLWin     = 0x5B
+	vkRWin     = 0x5C
+	vkLControl = 0xA2
+	vkRControl = 0xA3
 
 	vkProcessKey = 0xE5
 	vkPacket     = 0xE7

@@ -976,7 +976,7 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool,
 			}
 			continue
 		}
-		s.wheel = nil
+		flushed := rt.flushWheel(s)
 		if scrollBy(s, sx, sy) {
 			if s.snap != nil {
 				// It rests at a place once the fingers, and the momentum
@@ -985,6 +985,9 @@ func (rt *engine) scroll(dx, dy float32, mods Modifiers, precise, momentum bool,
 			}
 			rt.requestFrame()
 			return
+		}
+		if flushed {
+			rt.requestFrame()
 		}
 	}
 }
@@ -1031,9 +1034,9 @@ func (rt *engine) swipe(dx, dy float32, mods Modifiers) bool {
 	return rt.deliver(rt.focusHandler(), ev)
 }
 
-// zoom gives a pinch to the element under the pointer that handles its
-// input; no element zooms of its own. A touchpad's pinch whose phases the
-// platform tells is one gesture (zoomGesture).
+// zoom gives a pinch to the innermost element under the pointer that
+// takes it; no element zooms of its own. A touchpad's pinch whose phases
+// the platform tells is one gesture (zoomGesture).
 func (rt *engine) zoom(scale, rotation float32, phase GesturePhase, mods Modifiers) {
 	if phase != GestureNone {
 		rt.zoomGesture(InputEvent{Kind: InputZoom, Scale: scale, Rotation: rotation, Phase: phase, Mods: mods})
@@ -1042,9 +1045,14 @@ func (rt *engine) zoom(scale, rotation float32, phase GesturePhase, mods Modifie
 	if scale <= 0 || scale == 1 && rotation == 0 {
 		return
 	}
+	ev := InputEvent{Kind: InputZoom, Scale: scale, Rotation: rotation, Mods: mods}
 	chain := rt.appendHitChain(rt.chain[:0], rt.pointerX, rt.pointerY)
 	rt.chain = chain[:0]
-	rt.deliver(rt.handler(chain), InputEvent{Kind: InputZoom, Scale: scale, Rotation: rotation, Mods: mods})
+	for _, id := range chain {
+		if s := rt.states[id]; s != nil && s.input != nil && s.flags&flagDisabled == 0 && rt.deliver(s, ev) {
+			return
+		}
+	}
 }
 
 // zoomGesture gives an event of a touchpad's pinch to the element that

@@ -214,3 +214,45 @@ func TestWheelReverseAtEnd(t *testing.T) {
 		t.Fatalf("the wheel did not turn back at the end: still at %v, want < 800", s.Y)
 	}
 }
+
+// When a precise scroll interrupts an in-progress mouse-wheel glide, any
+// progress the glide has already made up to now is flushed before clearing
+// the glide so elapsed travel is not dropped; if the app already took over
+// ScrollState, stale wheel travel is not applied.
+func TestWheelFlushedBeforePreciseScroll(t *testing.T) {
+	var s ScrollState
+	tt := coreNewTester(func(c *context) {
+		coreScroll(c).Fill().TrackScroll(&s).Children(func() {
+			coreBox(c).Height(1000).Shrink(0)
+		})
+	}, 200, 200)
+	tt.Move(100, 100)
+
+	// Start a wheel glide, let time elapse before the next frame runs
+	// glideWheels, then interrupt with a precise scroll.
+	tt.Wheel(100, 100, 0, 100)
+	if s.Y != 0 {
+		t.Fatalf("initial wheel offset = %v, want 0", s.Y)
+	}
+	tt.now = tt.now.Add(50 * time.Millisecond)
+	tt.Scroll(100, 100, 0, 10)
+	if s.Y <= 10 || s.Y >= 110 {
+		t.Fatalf("after flushing 50ms of glide + 10 DIP scroll: s.Y = %v, want in (10, 110)", s.Y)
+	}
+	after := s.Y
+	// The glide is cleared: advancing further must not keep scrolling.
+	tt.Advance(time.Second)
+	if s.Y != after {
+		t.Fatalf("glide kept moving after precise takeover: s.Y = %v, want %v", s.Y, after)
+	}
+
+	// If the app sets ScrollState.Y before the precise scroll arrives,
+	// flushWheel must not flush the superseded wheel glide on top of it.
+	tt.Wheel(100, 100, 0, 100)
+	tt.now = tt.now.Add(50 * time.Millisecond)
+	s.Y = 5
+	tt.Scroll(100, 100, 0, 10)
+	if math.Abs(float64(s.Y-(after+10))) > 1e-4 {
+		t.Fatalf("app takeover before precise scroll: s.Y = %v, want %v (no stale glide flushed)", s.Y, after+10)
+	}
+}

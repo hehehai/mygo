@@ -79,8 +79,8 @@ const (
 	// smart zoom (two fingers tapped twice, which zooms to what is under
 	// the pointer or back, as a double tap in Preview) comes as an
 	// InputZoom of its own, GestureSmart and Scale 1. Where the platform
-	// does not tell (GestureNone), each event goes to the element under
-	// the pointer that handles its input.
+	// does not tell (GestureNone), each event bubbles from the innermost
+	// element under the pointer outward until one takes it.
 	InputZoom
 	// InputSwipe is a touchpad's swipe at X, Y (macOS: three fingers, or
 	// two where the system's "Swipe between pages" takes them so): DX 1

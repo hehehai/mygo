@@ -4,7 +4,6 @@ package windows
 
 import (
 	"log"
-	"math"
 	"time"
 	"unicode/utf16"
 	"unsafe"
@@ -142,6 +141,9 @@ type surface struct {
 	pointerAt point
 	// touch follows the fingers on the surface (fingerMessage).
 	touch platform.TouchGesture
+	// wheel tracks touchpad precise-scroll stickiness and synthetic pinch
+	// gesture phases (wheel_state.go).
+	wheel wheelState
 	// canceledUp tells that the system took the press of the pen or the
 	// finger (cancelPress): the mouse button's release that follows is
 	// its, and goes nowhere.
@@ -301,8 +303,9 @@ func (s *surface) unpainted() bool {
 // once timerUncloak fires, uncloakAfter later, which needs the main thread
 // to be idle meanwhile: drawing a frame never lets it fire.
 const (
-	dwmwaCloak   = 13 // DWMWA_CLOAK
-	timerUncloak = 3  // the surface's timer that shows a window still cloaked
+	dwmwaCloak    = 13 // DWMWA_CLOAK
+	timerUncloak  = 3  // the surface's timer that shows a window still cloaked
+	timerPinchEnd = 7  // one-shot timer ending a synthetic touchpad pinch
 )
 
 var uncloakAfter = time.Second
@@ -761,11 +764,44 @@ func (s *surface) pointer(kind platform.SurfaceEventKind, lp uintptr, button int
 	s.send(platform.SurfaceEvent{Kind: kind, X: s.toDIP(int32(x)), Y: s.toDIP(int32(y)), Button: button, Clicks: clicks, Mods: mods(), Pointer: pointer, Pressure: pressure})
 }
 
+// physicalCtrlDown reports whether a physical keyboard Ctrl key is held.
+// Windows Precision Touchpads and VM trackpad forwarders set MK_CONTROL in
+// WM_MOUSEWHEEL's wParam for two-finger pinch without pressing any Ctrl key.
+func physicalCtrlDown() bool {
+	for _, vk := range [...]uintptr{vkControl, vkLControl, vkRControl} {
+		if r, _, _ := procGetAsyncKeyState.Call(vk); r&0x8000 != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// isPinchWheel reports whether a wheel message should be treated as a
+// touchpad pinch rather than scrolling (without mutating wheel state).
+func (s *surface) isPinchWheel(m uint32, wp uintptr) bool {
+	return s.wheel.isPinch(m == wmMouseHWheel, int16(hiword(wp)), loword(wp), physicalCtrlDown())
+}
+
+// endPinch ends any active synthetic touchpad pinch cleanly and kills its
+// one-shot timer. When idle it does no syscalls and emits no events.
+func (s *surface) endPinch() {
+	ev, kill, ok := s.wheel.endPinch()
+	if kill && s.hwnd != 0 {
+		procKillTimer.Call(s.hwnd, timerPinchEnd)
+	}
+	if ok {
+		s.send(ev)
+	}
+}
+
 func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool) {
 	switch m {
 	case wmMouseMove, wmLButtonDown, wmLButtonDblClk, wmLButtonUp, wmRButtonDown, wmRButtonDblClk, wmRButtonUp,
 		wmMButtonDown, wmMButtonDblClk, wmMButtonUp, wmXButtonDown, wmXButtonDblClk, wmXButtonUp, wmMouseWheel, wmMouseHWheel:
 		if s.forwardMouse(m, wp, lp) {
+			if m != wmMouseMove {
+				s.endPinch()
+			}
 			return 0, true // the web view under the pointer takes it
 		}
 	case wmTimer:
@@ -779,6 +815,16 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 				if webViewBuilt && v.controller == 0 && v.webViewErr == nil {
 					v.createWebView()
 				}
+			}
+			return 0, true
+		}
+		if wp == timerPinchEnd {
+			ev, kill, ok := s.wheel.pinchTimeout()
+			if kill {
+				procKillTimer.Call(hwnd, timerPinchEnd)
+			}
+			if ok {
+				s.send(ev)
 			}
 			return 0, true
 		}
@@ -815,6 +861,9 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 		s.drawNow()
 		return 0, true
 	case wmPointerDown, wmPointerUpdate, wmPointerUp:
+		if m == wmPointerDown {
+			s.endPinch()
+		}
 		if s.pointerMessage(m, wp) {
 			// A finger the gesture follows, of which DefWindowProc makes
 			// no mouse.
@@ -860,6 +909,7 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 		s.send(platform.SurfaceEvent{Kind: platform.PointerLeave})
 		return 0, true
 	case wmLButtonDown, wmLButtonDblClk, wmRButtonDown, wmRButtonDblClk, wmMButtonDown, wmMButtonDblClk:
+		s.endPinch()
 		button := 0
 		switch m {
 		case wmRButtonDown, wmRButtonDblClk:
@@ -899,6 +949,9 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 		}
 		return 0, true
 	case wmXButtonDown, wmXButtonDblClk, wmXButtonUp:
+		if m != wmXButtonUp {
+			s.endPinch()
+		}
 		// The side buttons go back and forward, as keys do, as they are
 		// let go: Windows's apps go there then, as DefWindowProc sends
 		// WM_APPCOMMAND, which taking them leaves out.
@@ -938,31 +991,22 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 		s.buttons = 0
 		if lp != hwnd {
 			s.webCapture = nil
+			s.endPinch()
 		}
 		return 0, true
 	case wmMouseWheel, wmMouseHWheel:
 		pt := point{int32(int16(loword(lp))), int32(int16(hiword(lp)))}
 		procScreenToClient.Call(hwnd, uintptr(unsafe.Pointer(&pt)))
-		delta := float64(int16(hiword(wp)))
-		precise := int(delta)%120 != 0
-		if pinching(m, wp) {
-			// A touchpad's pinch, which Windows sends as scrolling with
-			// Ctrl held, as it does Ctrl and two fingers: three notches'
-			// worth zoom twice as large.
-			s.send(platform.SurfaceEvent{Kind: platform.PointerZoom, X: s.toDIP(pt.X), Y: s.toDIP(pt.Y), Scale: math.Exp(delta / 120 * math.Ln2 / 3), Mods: mods()})
-			return 0, true
+		res := s.wheel.handleWheel(time.Now(), m == wmMouseHWheel, int16(hiword(wp)), loword(wp), physicalCtrlDown(), s.toDIP(pt.X), s.toDIP(pt.Y), wheelLines(), mods())
+		switch res.timer {
+		case wheelTimerReset:
+			procSetTimer.Call(hwnd, timerPinchEnd, uintptr(pinchEndTimeout/time.Millisecond), 0)
+		case wheelTimerKill:
+			procKillTimer.Call(hwnd, timerPinchEnd)
 		}
-		// A line of the system's "lines to scroll" is 33 DIPs, as
-		// browsers scroll about 100 pixels a notch at the default 3;
-		// the terminal plugin scrolls a row a line (wheelRows).
-		dist := delta / 120 * float64(wheelLines()) * 33
-		ev := platform.SurfaceEvent{Kind: platform.PointerScroll, X: s.toDIP(pt.X), Y: s.toDIP(pt.Y), Mods: mods(), Precise: precise}
-		if m == wmMouseWheel {
-			ev.DY = -dist
-		} else {
-			ev.DX = dist
+		for i := range res.n {
+			s.send(res.events[i])
 		}
-		s.send(ev)
 		return 0, true
 	case wmSetCursor:
 		if loword(lp) == htClient {
@@ -978,9 +1022,11 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 		s.send(platform.SurfaceEvent{Kind: platform.SurfaceFocus})
 		return 0, true
 	case wmKillFocus:
+		s.endPinch()
 		s.send(platform.SurfaceEvent{Kind: platform.SurfaceBlur})
 		return 0, true
 	case wmKeyDown, wmSysKeyDown:
+		s.endPinch()
 		s.clientComposition.Reset()
 		s.keyTaken, s.menuRan = false, false
 		modifiers := mods()
@@ -1106,6 +1152,7 @@ func (s *surface) message(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool
 	case wmGetObject:
 		return s.getObject(wp, lp)
 	case wmDestroy:
+		s.endPinch()
 		s.CancelDataDrag()
 		s.destroyAccess()
 		s.revokeFileDrops()

@@ -407,3 +407,59 @@ func TestScrollHandlerAroundContainer(t *testing.T) {
 		t.Fatalf("the wheel alone: handler took %v, container scrolled %v; want 30, 30", zoomed, inner.Y)
 	}
 }
+
+// A GestureNone pinch over an inner element whose input handler ignores
+// InputZoom (returns false) bubbles outward to the enclosing handler,
+// while an inner element that takes it stops bubbling and a disabled
+// inner element is skipped.
+func TestZoomGestureNoneBubbles(t *testing.T) {
+	var outerScales []float32
+	var outerAt [2]float32
+	var innerTake bool
+	var innerDisabled bool
+	var innerSeen int
+	tt := NewTester(func(c *Context) {
+		Box(c).Size(200, 200).HandleInput(func(ev InputEvent) bool {
+			if ev.Kind != InputZoom {
+				return false
+			}
+			outerScales = append(outerScales, ev.Scale)
+			outerAt = [2]float32{ev.X, ev.Y}
+			return true
+		}).Children(func() {
+			b := Box(c).Absolute().Left(30).Top(40).Size(100, 100).HandleInput(func(ev InputEvent) bool {
+				if ev.Kind != InputZoom {
+					return false
+				}
+				innerSeen++
+				return innerTake
+			})
+			if innerDisabled {
+				b.Disabled(true)
+			}
+		})
+	}, 200, 200)
+	defer tt.rt.close()
+	tt.Frame()
+
+	// Inner ignores InputZoom -> outer receives it with outer's local coords.
+	tt.Pinch(80, 90, 1.5)
+	if innerSeen != 1 || len(outerScales) != 1 || outerScales[0] != 1.5 || outerAt != [2]float32{80, 90} {
+		t.Fatalf("inner ignored: innerSeen=%d outerScales=%v outerAt=%v; want 1, [1.5], [80 90]", innerSeen, outerScales, outerAt)
+	}
+
+	// Inner takes InputZoom -> stops bubbling before outer.
+	innerTake = true
+	tt.Pinch(80, 90, 2)
+	if innerSeen != 2 || len(outerScales) != 1 {
+		t.Fatalf("inner took: innerSeen=%d outerScales=%v; want 2, [1.5]", innerSeen, outerScales)
+	}
+
+	// Disabled inner is skipped -> outer receives it directly.
+	innerDisabled = true
+	tt.Frame()
+	tt.Pinch(80, 90, 0.75)
+	if innerSeen != 2 || len(outerScales) != 2 || outerScales[1] != 0.75 {
+		t.Fatalf("inner disabled: innerSeen=%d outerScales=%v; want 2, [1.5 0.75]", innerSeen, outerScales)
+	}
+}

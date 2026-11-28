@@ -73,12 +73,13 @@ func TestZoomGesture(t *testing.T) {
 		t.Fatalf("a smart zoom: %v, want %v", seen, want)
 	}
 
-	// Without phases (GestureNone), as before: the innermost element
-	// handling input has each event, and a pinch of no zoom is none.
+	// Without phases (GestureNone), each event bubbles from the innermost
+	// element handling input outward until one takes it, and a pinch of no
+	// zoom is none.
 	seen = nil
 	tt.Pinch(150, 40, 1.5)
 	tt.Pinch(30, 40, 1)
-	want = []got{{"right", 1.5, GestureNone, 50, 40}}
+	want = []got{{"right", 1.5, GestureNone, 50, 40}, {"outer", 1.5, GestureNone, 150, 40}}
 	if !slices.Equal(seen, want) {
 		t.Fatalf("pinches without phases: %v, want %v", seen, want)
 	}

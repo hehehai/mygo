@@ -99,6 +99,29 @@ func wheelTurn(ch *channel, d float32, actual float64, done *float64) float64 {
 	return ch.target + float64(d)
 }
 
+// flushWheel applies any progress an active wheel glide has made up to now
+// before clearing s.wheel, so elapsed travel is not lost when a precise
+// scroll takes over mid-glide.
+func (rt *engine) flushWheel(s *state) bool {
+	g := s.wheel
+	if g == nil {
+		return false
+	}
+	s.wheel = nil
+	if t := s.track; t != nil && (t.X != float32(s.scrollX) || t.Y != float32(s.scrollY) || t.glide != nil) ||
+		s.list != nil && s.list.scrolled {
+		return false
+	}
+	now := rt.now()
+	g.x.advance(now)
+	g.y.advance(now)
+	dx, dy := g.x.value-g.doneX, g.y.value-g.doneY
+	if dx == 0 && dy == 0 {
+		return false
+	}
+	return scrollBy(s, float32(dx), float32(dy))
+}
+
 // glideWheels moves the containers that notches of a wheel scroll, or
 // ScrollIntoView glides, to the frame's time.
 func (rt *engine) glideWheels(now time.Time) {

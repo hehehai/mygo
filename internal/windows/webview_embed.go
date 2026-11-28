@@ -598,7 +598,7 @@ func (s *surface) forwardMouse(m uint32, wp, lp uintptr) bool {
 	if v == nil || v.closed {
 		return false
 	}
-	if (m == wmMouseWheel || m == wmMouseHWheel) && v.opts.ScrollToContainer && !pinching(m, wp) {
+	if (m == wmMouseWheel || m == wmMouseHWheel) && v.opts.ScrollToContainer && !s.isPinchWheel(m, wp) {
 		return false // the content around the web view scrolls
 	}
 	var data uint32
@@ -650,12 +650,6 @@ func (s *surface) forwardMouse(m uint32, wp, lp uintptr) bool {
 		}
 	}
 	return true
-}
-
-// pinching reports whether a wheel message is a touchpad's pinch, which
-// Windows sends as scrolling by less than a notch with Ctrl held.
-func pinching(m uint32, wp uintptr) bool {
-	return m == wmMouseWheel && int16(hiword(wp))%120 != 0 && loword(wp)&0x0008 != 0 // MK_CONTROL
 }
 
 // mouseLeft tells the web view the pointer was over that it left.
