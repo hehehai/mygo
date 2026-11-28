@@ -208,6 +208,9 @@ func (b *Backend) loseComposition(err error) {
 		if s.comp != nil {
 			s.comp.free()
 		}
+		if s.layer != nil && !s.layer.ownDev {
+			s.dropWebLayer()
+		}
 	}
 	if b.comp != nil {
 		b.comp.free()
@@ -248,8 +251,12 @@ func (b *Backend) recompose() {
 		}
 		c.paint()
 	}
-	// Frames drawn in memory that could not show draw again.
+	// Frames drawn in memory and embedded web view layers that could not show
+	// draw again.
 	for _, s := range b.surfaces {
+		if s.layer != nil && s.layer.dcomp == 0 {
+			s.rebuildWebLayer()
+		}
 		if s.comp == nil || s.comp.dev != nil {
 			continue
 		}

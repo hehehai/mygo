@@ -104,11 +104,21 @@ type window struct {
 	corners          uintptr
 	// effect fades the page itself, where the placement says it does not
 	// show whole, which the clip visual's sub-tree is composed by.
-	effect         uintptr
-	shown, focused bool
-	hidden         bool
-	cursor         uintptr
-	saved          struct {
+	effect uintptr
+	// underVis and underSurf show the embedded web view's underlay picture
+	// (webview_underlay.go) inside clipVis directly below webVis; underPx
+	// caches the premultiplied BGRA pixels of size underW×underH to skip
+	// duplicate uploads and restore across GPU device loss.
+	underVis, underSurf    uintptr
+	underPx                []uint32
+	underW, underH         int
+	underSurfW, underSurfH int
+	underRect              platform.RectF
+	hasUnderlay            bool
+	shown, focused         bool
+	hidden                 bool
+	cursor                 uintptr
+	saved                  struct {
 		style, exStyle uintptr
 		placement      windowPlacement
 	}
@@ -1343,17 +1353,7 @@ func (w *window) applyWebViewBackground() {
 		return
 	}
 	defer release(ctl2)
-	var c uint32 = 0xFFFFFFFF // opaque white: A, R, G, B bytes
-	switch {
-	case w.vibrancy != "":
-		c = 0
-	case w.opts.Transparent && (w.bg == nil || !w.noRedirect):
-		c = 0
-	case w.bg != nil && w.bg.A == 0:
-		c = 0
-	case w.bg != nil:
-		c = 0xFF | uint32(w.bg.R)<<8 | uint32(w.bg.G)<<16 | uint32(w.bg.B)<<24
-	}
+	c := effectiveWebViewBackground(w.bg, w.host != nil, w.hasUnderlay, w.opts.Transparent, w.noRedirect, w.vibrancy)
 	comCall(ctl2, ctl2PutDefaultBackgroundColor, uintptr(c))
 }
 

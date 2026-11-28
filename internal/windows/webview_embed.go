@@ -4,8 +4,10 @@ package windows
 
 import (
 	"cmp"
+	"log"
 	"math"
 	"slices"
+	"time"
 	"unsafe"
 
 	"github.com/egoist/mygo/internal/platform"
@@ -92,37 +94,67 @@ const (
 )
 
 // webLayer is the tree of a surface's web views: a DirectComposition
-// target on the surface's window that is not topmost, on a device of its
-// own without a rendering device, which no GPU reset takes away.
+// target on the surface's window that is not topmost. When the backend's
+// shared Direct3D 11 + DirectComposition device is available (dev != nil),
+// the tree shares it so embedded web views can also create DirectComposition
+// surfaces for underlays (webview_underlay.go) on the same device; if the
+// shared device is unavailable, it falls back to a device of its own without
+// a rendering device (ownDev = true), which still hosts WebView2 visuals.
 type webLayer struct {
+	dev                 *composition // borrowed from Backend.comp when non-nil
+	ownDev              bool         // true when dcomp was created via DCompositionCreateDevice2(0, ...)
 	dcomp, target, root uintptr
 }
 
-func newWebLayer(hwnd uintptr) (*webLayer, error) {
+func newWebLayer(b *Backend, hwnd uintptr) (*webLayer, error) {
+	for range 2 {
+		dev := b.composition()
+		if dev == nil {
+			break
+		}
+		l := &webLayer{dev: dev, dcomp: dev.dcomp}
+		err := l.attach(hwnd)
+		if err == nil {
+			return l, nil
+		}
+		l.free()
+		if !dev.lost() {
+			break
+		}
+		b.loseComposition(err)
+	}
 	if err := procDCompositionCreateDevice2.Find(); err != nil {
 		return nil, err
 	}
-	l := &webLayer{}
+	l := &webLayer{ownDev: true}
 	hr, _, _ := procDCompositionCreateDevice2.Call(0, uintptr(unsafe.Pointer(&iidIDCompositionDevice)), uintptr(unsafe.Pointer(&l.dcomp)))
 	if failed(hr) {
 		return nil, hresultError("DCompositionCreateDevice2", hr)
 	}
-	if hr := comCall(l.dcomp, dcompDevCreateTargetForHwnd, hwnd, 0, uintptr(unsafe.Pointer(&l.target))); failed(hr) {
+	if err := l.attach(hwnd); err != nil {
 		l.free()
-		return nil, hresultError("IDCompositionDevice::CreateTargetForHwnd", hr)
-	}
-	if hr := comCall(l.dcomp, dcompDevCreateVisual, uintptr(unsafe.Pointer(&l.root))); failed(hr) {
-		l.free()
-		return nil, hresultError("IDCompositionDevice::CreateVisual", hr)
-	}
-	if hr := comCall(l.target, dcompTargetSetRoot, l.root); failed(hr) {
-		l.free()
-		return nil, hresultError("IDCompositionTarget::SetRoot", hr)
+		return nil, err
 	}
 	return l, nil
 }
 
+func (l *webLayer) attach(hwnd uintptr) error {
+	if hr := comCall(l.dcomp, dcompDevCreateTargetForHwnd, hwnd, 0, uintptr(unsafe.Pointer(&l.target))); failed(hr) {
+		return hresultError("IDCompositionDevice::CreateTargetForHwnd", hr)
+	}
+	if hr := comCall(l.dcomp, dcompDevCreateVisual, uintptr(unsafe.Pointer(&l.root))); failed(hr) {
+		return hresultError("IDCompositionDevice::CreateVisual", hr)
+	}
+	if hr := comCall(l.target, dcompTargetSetRoot, l.root); failed(hr) {
+		return hresultError("IDCompositionTarget::SetRoot", hr)
+	}
+	return nil
+}
+
 func (l *webLayer) visual() uintptr {
+	if l.dcomp == 0 {
+		return 0
+	}
 	var v uintptr
 	comCall(l.dcomp, dcompDevCreateVisual, uintptr(unsafe.Pointer(&v)))
 	return v
@@ -131,18 +163,102 @@ func (l *webLayer) visual() uintptr {
 // effectGroup makes an effect group, whose opacity fades the sub-tree of
 // the visual it is set on over what is behind it.
 func (l *webLayer) effectGroup() uintptr {
+	if l.dcomp == 0 {
+		return 0
+	}
 	var g uintptr
 	comCall(l.dcomp, dcompDevCreateEffectGroup, uintptr(unsafe.Pointer(&g)))
 	return g
 }
 
-func (l *webLayer) commit() { comCall(l.dcomp, dcompDevCommit) }
+func (l *webLayer) commit() {
+	if l.dcomp != 0 {
+		comCall(l.dcomp, dcompDevCommit)
+	}
+}
 
 func (l *webLayer) free() {
-	for _, p := range []*uintptr{&l.root, &l.target, &l.dcomp} {
-		release(*p)
-		*p = 0
+	release(l.root)
+	release(l.target)
+	l.root, l.target = 0, 0
+	if l.ownDev {
+		release(l.dcomp)
 	}
+	l.dcomp = 0
+	l.dev = nil
+	l.ownDev = false
+}
+
+// dropWebLayer releases every DirectComposition object tied to a lost shared
+// device while keeping each embedded web view's cached placement and underlay
+// pixels so rebuildWebLayer can restore them once a new device is ready.
+func (s *surface) dropWebLayer() {
+	if s.layer == nil || s.layer.ownDev {
+		return
+	}
+	for _, v := range s.w.webViews {
+		if v.comp != 0 {
+			comCall(v.comp, compPutRootVisualTarget, 0)
+		}
+		v.releaseUnderlayVisuals()
+		release(v.corners)
+		release(v.webVis)
+		release(v.clipVis)
+		release(v.effect)
+		v.corners, v.webVis, v.clipVis, v.effect = 0, 0, 0, 0
+	}
+	s.stacked = nil
+	s.layer.free()
+}
+
+// rebuildWebLayer recreates the DirectComposition target, visuals, and
+// underlay surfaces for s.layer on the backend's new shared device after
+// loseComposition.
+func (s *surface) rebuildWebLayer() {
+	if s.w.closed || s.layer == nil || s.layer.dcomp != 0 {
+		return
+	}
+	b := s.w.b
+	dev := b.composition()
+	if dev == nil {
+		b.composeLater(b.compRetry)
+		return
+	}
+	s.layer.dev = dev
+	s.layer.dcomp = dev.dcomp
+	if err := s.layer.attach(s.hwnd); err != nil {
+		s.layer.free()
+		if dev.lost() {
+			b.loseComposition(err)
+			return
+		}
+		log.Printf("mygo: cannot rebuild embedded web view layer: %v", err)
+		b.composeLater(time.Now().Add(backoff(0)))
+		return
+	}
+	for _, v := range s.w.webViews {
+		if v.closed {
+			continue
+		}
+		v.clipVis, v.webVis = s.layer.visual(), s.layer.visual()
+		if v.clipVis != 0 && v.webVis != 0 {
+			comCall(v.clipVis, dcompVisualAddVisual, v.webVis, 1, 0)
+		}
+		if v.comp != 0 && v.webVis != 0 {
+			comCall(v.comp, compPutRootVisualTarget, v.webVis)
+		}
+		if v.hasUnderlay && len(v.underPx) > 0 && v.underW > 0 && v.underH > 0 {
+			if err := v.uploadUnderlay(true); err != nil {
+				if dev.lost() {
+					b.loseComposition(err)
+					return
+				}
+				log.Printf("mygo: cannot restore web view underlay: %v", err)
+				v.dropUnderlay()
+			}
+		}
+	}
+	s.PlaceWebViews(slices.Clone(s.placed))
 }
 
 // translate moves a visual by x, y pixels.
@@ -204,7 +320,7 @@ func (s *surface) NewWebView(o *platform.WindowOptions, h platform.WindowHandler
 		return nil, err
 	}
 	if s.layer == nil {
-		l, err := newWebLayer(s.hwnd)
+		l, err := newWebLayer(b, s.hwnd)
 		if err != nil {
 			return nil, err
 		}
@@ -228,8 +344,12 @@ func (s *surface) NewWebView(o *platform.WindowOptions, h platform.WindowHandler
 	}
 	// Only apps with web views in native UI link the script of their keys.
 	forwardKeys = (*window).forwardUnhandledKeys
-	v.clipVis, v.webVis = s.layer.visual(), s.layer.visual()
-	comCall(v.clipVis, dcompVisualAddVisual, v.webVis, 1, 0)
+	if s.layer.dcomp != 0 {
+		v.clipVis, v.webVis = s.layer.visual(), s.layer.visual()
+		if v.clipVis != 0 && v.webVis != 0 {
+			comCall(v.clipVis, dcompVisualAddVisual, v.webVis, 1, 0)
+		}
+	}
 	s.w.webViews = append(s.w.webViews, v)
 	b.whenEnvironment(v.createWebView)
 	return v, nil
@@ -246,7 +366,9 @@ func (w *window) createEmbedded(handler uintptr) uintptr {
 func (w *window) setUpEmbedded(comp uintptr) uintptr {
 	w.comp = comp
 	controller := queryInterface(comp, &iidICoreWebView2Controller)
-	comCall(comp, compPutRootVisualTarget, w.webVis)
+	if w.webVis != 0 {
+		comCall(comp, compPutRootVisualTarget, w.webVis)
+	}
 	// The add methods write a registration token. Its address is taken in
 	// each call (go:uintptrescapes), as a uintptr saved earlier goes stale
 	// when the goroutine stack moves.
@@ -351,11 +473,14 @@ func (s *surface) PlaceWebViews(views []platform.WebViewPlacement) {
 			}
 		}
 	}
-	if !slices.Equal(shown, s.stacked) {
+	if s.layer.root != 0 && !slices.Equal(shown, s.stacked) {
 		// The visuals of those shown, in the order painted.
 		comCall(s.layer.root, dcompVisualRemoveAllVisuals)
 		prev := uintptr(0)
 		for _, v := range shown {
+			if v.clipVis == 0 {
+				continue
+			}
 			comCall(s.layer.root, dcompVisualAddVisual, v.clipVis, 1, prev)
 			prev = v.clipVis
 		}
@@ -382,23 +507,6 @@ func (w *window) placeEmbedded() {
 	f, c := w.placement.Frame, w.placement.Clip
 	cx, cy := px(c.X), px(c.Y)
 	fx, fy := px(f.X), px(f.Y)
-	clipVisual(w.clipVis, px(c.X+c.W)-cx, px(c.Y+c.H)-cy)
-	translate(w.clipVis, cx, cy)
-	// The placement's opacity fades the page itself, over what is behind
-	// the window too, as a flyout over a parent left live: an effect group
-	// composes the clip visual's sub-tree, the page, to a surface of its
-	// own, blended by its opacity with what is behind it.
-	if o := w.placement.Opacity; o < 1 {
-		if w.effect == 0 {
-			w.effect = s.layer.effectGroup()
-		}
-		if w.effect != 0 {
-			comCallFloat32(w.effect, dcompEffectGroupSetOpacity, float32(o))
-			comCall(w.clipVis, dcompVisualSetEffect, w.effect)
-		}
-	} else if w.effect != 0 {
-		comCall(w.clipVis, dcompVisualSetEffect, 0)
-	}
 	// The page lays out at its size, which its visual shows scaled to its
 	// frame, if a transform of the content scales it.
 	width, height := px(f.X+f.W)-fx, px(f.Y+f.H)-fy
@@ -410,13 +518,33 @@ func (w *window) placeEmbedded() {
 		scale = [2]float32{float32(f.W*k) / width, float32(f.H*k) / height}
 	}
 	w.pageAt, w.pageScale = at, scale
-	// The page draws from its visual's origin.
-	place(w.webVis, at[0]-cx, at[1]-cy, scale[0], scale[1])
-	var radii [4]float32
-	for i, r := range w.placement.Radii {
-		radii[i] = float32(r * k)
+	if s.layer != nil && s.layer.dcomp != 0 && w.clipVis != 0 && w.webVis != 0 {
+		clipVisual(w.clipVis, px(c.X+c.W)-cx, px(c.Y+c.H)-cy)
+		translate(w.clipVis, cx, cy)
+		// The placement's opacity fades the page itself, over what is behind
+		// the window too, as a flyout over a parent left live: an effect group
+		// composes the clip visual's sub-tree, the page, to a surface of its
+		// own, blended by its opacity with what is behind it.
+		if o := w.placement.Opacity; o < 1 {
+			if w.effect == 0 {
+				w.effect = s.layer.effectGroup()
+			}
+			if w.effect != 0 {
+				comCallFloat32(w.effect, dcompEffectGroupSetOpacity, float32(o))
+				comCall(w.clipVis, dcompVisualSetEffect, w.effect)
+			}
+		} else if w.effect != 0 {
+			comCall(w.clipVis, dcompVisualSetEffect, 0)
+		}
+		// The page draws from its visual's origin.
+		place(w.webVis, at[0]-cx, at[1]-cy, scale[0], scale[1])
+		w.placeUnderlay()
+		var radii [4]float32
+		for i, r := range w.placement.Radii {
+			radii[i] = float32(r * k)
+		}
+		w.roundCorners(s.layer, width, height, radii)
 	}
-	w.roundCorners(s.layer, width, height, radii)
 	if w.controller == 0 {
 		return
 	}
@@ -613,11 +741,18 @@ func (w *window) closeWebView() {
 		}
 		s.placed = slices.DeleteFunc(s.placed, func(p platform.WebViewPlacement) bool { return p.WebView == platform.WebView(w) })
 		if i := slices.Index(s.stacked, w); i >= 0 && s.layer != nil {
-			comCall(s.layer.root, dcompVisualRemoveVisual, w.clipVis)
+			if s.layer.root != 0 && w.clipVis != 0 {
+				comCall(s.layer.root, dcompVisualRemoveVisual, w.clipVis)
+			}
 			s.stacked = slices.Delete(slices.Clone(s.stacked), i, i+1)
 			s.layer.commit()
 		}
 	}
+	w.hasUnderlay = false
+	w.underPx = nil
+	w.underW, w.underH = 0, 0
+	w.underRect = platform.RectF{}
+	w.releaseUnderlayVisuals()
 	release(w.corners)
 	release(w.webVis)
 	release(w.clipVis)

@@ -257,7 +257,10 @@ type WebViewUnderlay struct {
 // paints around the web view (a picture across the window) goes on under
 // the page, past its ends as it is pulled (the rubber band) too. A
 // picture the same as the last (its Image the same value) only moves.
-// macOS; elsewhere it does nothing.
+// macOS and Windows; elsewhere it does nothing. On Windows, an active
+// underlay also makes the embedded web view's default background
+// transparent so the underlay shows through transparent parts of the page,
+// restoring the configured background color when cleared.
 func (v *WebView) SetUnderlay(u WebViewUnderlay) {
 	r := platform.RectF{X: u.X, Y: u.Y, W: u.Width, H: u.Height}
 	v.underMu.Lock()
