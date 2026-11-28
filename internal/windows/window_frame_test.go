@@ -103,3 +103,92 @@ func TestTransparentWebWindowSuppressesNativeFramePainting(t *testing.T) {
 		})
 	}
 }
+
+func TestTransparentSurfacePanelStylesAndCorners(t *testing.T) {
+	build := windowsBuild
+	t.Cleanup(func() { windowsBuild = build })
+	windowsBuild = func() uint32 { return 22621 }
+
+	shelf := &window{
+		opts: &platform.WindowOptions{
+			Panel:       true,
+			Frameless:   true,
+			Transparent: true,
+			Surface:     true,
+			HasShadow:   false,
+			Resizable:   false,
+			Focusable:   true,
+		},
+		frameless:  true,
+		shadow:     false,
+		noRedirect: true,
+	}
+	style, ex := shelf.styles()
+	if style&wsThickFrame != 0 || style&wsSysMenu != 0 {
+		t.Errorf("shelf styles = %#x, want no WS_THICKFRAME or WS_SYSMENU", style)
+	}
+	if ex&(wsExToolWindow|wsExTopmost|wsExNoRedirect) != wsExToolWindow|wsExTopmost|wsExNoRedirect {
+		t.Errorf("shelf exStyle = %#x, want WS_EX_TOOLWINDOW|WS_EX_TOPMOST|WS_EX_NOREDIRECTIONBITMAP", ex)
+	}
+	if shelf.wantsRoundedCorners() {
+		t.Error("transparent shadowless surface panel requested DWMWCP_ROUND")
+	}
+	if !shelf.plainTransparentDWM() {
+		t.Error("transparent shadowless surface panel is not treated as plain transparent DWM")
+	}
+	if r := shelf.CornerRadius(); r != 0 {
+		t.Errorf("transparent shadowless surface panel CornerRadius = %v, want 0", r)
+	}
+
+	shadowedPanel := &window{
+		opts: &platform.WindowOptions{
+			Panel:       true,
+			Frameless:   true,
+			Transparent: true,
+			Surface:     true,
+			HasShadow:   true,
+		},
+		frameless:  true,
+		shadow:     true,
+		noRedirect: true,
+	}
+	if !shadowedPanel.wantsRoundedCorners() {
+		t.Error("shadowed transparent panel did not request DWMWCP_ROUND")
+	}
+	if shadowedPanel.plainTransparentDWM() {
+		t.Error("shadowed transparent panel was treated as plain transparent DWM")
+	}
+	if r := shadowedPanel.CornerRadius(); r != 8 {
+		t.Errorf("shadowed transparent panel CornerRadius = %v, want 8", r)
+	}
+
+	opaquePanel := &window{
+		opts:      &platform.WindowOptions{Panel: true, Frameless: true, Surface: true},
+		frameless: true,
+	}
+	if !opaquePanel.wantsRoundedCorners() {
+		t.Error("opaque frameless panel did not request DWMWCP_ROUND")
+	}
+	if r := opaquePanel.CornerRadius(); r != 8 {
+		t.Errorf("opaque frameless panel CornerRadius = %v, want 8", r)
+	}
+
+	shadowedFlyout := &window{
+		opts: &platform.WindowOptions{
+			Frameless:   true,
+			Transparent: true,
+			Surface:     true,
+			HasShadow:   true,
+			Flyout:      &platform.Flyout{},
+		},
+		frameless:  true,
+		shadow:     true,
+		noRedirect: true,
+	}
+	if shadowedFlyout.plainTransparentDWM() {
+		t.Error("flyout was treated as plain transparent DWM")
+	}
+	if _, ok := transparentFrameDWM(shadowedFlyout.opts, shadowedFlyout.frameless, shadowedFlyout.shadow, shadowedFlyout.noRedirect, windows11(), shadowedFlyout.vibrancy); ok {
+		t.Error("flyout should not be modified by transparentFrameDWM")
+	}
+}

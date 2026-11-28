@@ -206,10 +206,11 @@ func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler)
 		return nil, errors.New("mygo: cannot create a window")
 	}
 	b.windows[w.hwnd] = w
-	if o.Panel || o.Frameless && o.CornerRadius > 0 {
+	if w.wantsRoundedCorners() {
 		// Windows 11 gives tool windows the small corners of menus, and
 		// frameless windows none: rounded, they take its own corners,
-		// whatever the radius.
+		// whatever the radius. Plain transparent shadowless panels stay
+		// undecorated so DWM draws no outer frame, border, or shadow.
 		w.roundFlyout()
 	}
 	if o.Flyout != nil {
@@ -1202,14 +1203,15 @@ func (w *window) IsFocused() bool {
 }
 
 // CornerRadius is the 8 DIPs Windows 11 rounds a window's corners with: a
-// window with a frame, a panel, or a frameless one given a CornerRadius
-// (which takes the system's whatever its radius). A maximized or full-screen
-// window, a child host, and every window before Windows 11 are square.
+// window with a frame, a panel (unless it is a plain transparent shadowless
+// overlay), or a frameless one given a CornerRadius (which takes the system's
+// whatever its radius). A maximized or full-screen window, a child host, and
+// every window before Windows 11 are square.
 func (w *window) CornerRadius() float64 {
 	if w.host != nil || !windows11() || w.fullScreen || w.IsMaximized() {
 		return 0
 	}
-	if w.frameless && !w.opts.Panel && w.opts.CornerRadius <= 0 {
+	if w.frameless && !w.wantsRoundedCorners() {
 		return 0
 	}
 	return 8
@@ -1392,24 +1394,37 @@ func (w *window) SetHasShadow(v bool) {
 	procDwmExtendFrameIntoClientArea.Call(w.hwnd, uintptr(unsafe.Pointer(&m)))
 }
 
+func (w *window) plainTransparentDWM() bool {
+	return plainTransparentDWM(w.opts, w.frameless, w.shadow, w.vibrancy)
+}
+
+func (w *window) wantsRoundedCorners() bool {
+	return wantsRoundedCorners(w.opts, w.frameless, w.shadow, w.vibrancy)
+}
+
 // Transparent web overlays keep native sizing borders for hit testing, but a
 // shadowless frameless window must not draw DWM or GDI decorations over them.
 func (w *window) plainTransparentFrame() bool {
-	return w.frameless && w.opts.Transparent && !w.opts.Surface && w.vibrancy == "" && !w.shadow
+	return !w.opts.Surface && w.plainTransparentDWM()
 }
 
 func (w *window) applyTransparentFramePolicy() {
-	if !w.frameless || !w.opts.Transparent || w.opts.Surface {
+	spec, ok := transparentFrameDWM(w.opts, w.frameless, w.shadow, w.noRedirect, windows11(), w.vibrancy)
+	if !ok || w.hwnd == 0 {
 		return
 	}
-	policy := int32(0) // DWMNCRP_USEWINDOWSTYLE
-	if w.plainTransparentFrame() {
-		policy = 1 // DWMNCRP_DISABLED
+	if spec.applyNCRendering {
+		policy := spec.ncRendering
+		hr, _, _ := procDwmSetWindowAttribute.Call(w.hwnd, dwmwaNCRenderingPolicy, uintptr(unsafe.Pointer(&policy)), 4)
+		if failed(hr) {
+			log.Print(hresultError("setting the transparent window frame policy", hr))
+		}
 	}
-	const dwmwaNCRenderingPolicy = 2
-	hr, _, _ := procDwmSetWindowAttribute.Call(w.hwnd, dwmwaNCRenderingPolicy, uintptr(unsafe.Pointer(&policy)), 4)
-	if failed(hr) {
-		log.Print(hresultError("setting the transparent window frame policy", hr))
+	if spec.applyWin11Chrome {
+		pref := spec.cornerPreference
+		procDwmSetWindowAttribute.Call(w.hwnd, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&pref)), 4)
+		border := spec.borderColor
+		procDwmSetWindowAttribute.Call(w.hwnd, dwmwaBorderColor, uintptr(unsafe.Pointer(&border)), 4)
 	}
 }
 

@@ -865,10 +865,8 @@ const (
 	csDropShadow       = 0x00020000
 	wsExLayoutRTL      = 0x00400000
 
-	dwmwaBorderColor = 34
-	dwmColorDefault  = 0xFFFFFFFF
-	backdropAuto     = 0 // DWMSBT_AUTO, menus' own
-	smRemoteSession  = 0x1000
+	backdropAuto    = 0 // DWMSBT_AUTO, menus' own
+	smRemoteSession = 0x1000
 )
 
 var (
